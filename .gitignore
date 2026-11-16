@@ -1,0 +1,15 @@
+# Local state and user data
+.obsidian/
+data.json
+.planner-tasks.json
+**/.planner-tasks.json
+planner-backups/
+HANDOFF*
+DEFAULT_VERSION.json
+.env*
+*.pem
+*.key
+*.log
+.DS_Store
+__pycache__/
+node_modules/

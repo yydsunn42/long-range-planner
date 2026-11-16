@@ -1,0 +1,9 @@
+{
+  "id": "long-range-planner",
+  "name": "Long Range Planner",
+  "version": "1.16.20",
+  "minAppVersion": "1.5.0",
+  "description": "Long-range project planning with dashboards, calendars, boards, timelines and dependency graphs.",
+  "author": "Planner Contributors",
+  "isDesktopOnly": true
+}
