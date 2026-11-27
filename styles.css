@@ -1745,7 +1745,8 @@
   display: flex;
   flex-direction: column;
   background: var(--background-primary);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px 18px 0 18px;
   box-sizing: border-box;
 }
@@ -4070,6 +4071,10 @@ td.planner-rolled-up::after {
    MY TASKS – WEEK TASK CARDS
    ========================================================================== */
 
+.myday-week-card[draggable="true"],.myday-month-task[draggable="true"] { cursor: grab; }
+.myday-week-card[draggable="true"]:active,.myday-month-task[draggable="true"]:active { cursor: grabbing; }
+.myday-card-dragging { opacity: .5; }
+.myday-drop-target { box-shadow: inset 0 0 0 2px var(--interactive-accent); background: color-mix(in srgb, var(--interactive-accent) 9%, var(--background-primary)); }
 .myday-week-card {
   padding: 6px 8px;
   border-radius: 4px;
@@ -4797,7 +4802,7 @@ td.planner-rolled-up::after {
 }
 .lrp-board-navigation button { min-width: 34px; }
 .lrp-board-range { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
-.planner-board-wrapper .planner-board-toolbar { flex-wrap: wrap; }
+.planner-board-wrapper .planner-board-toolbar { flex-wrap: wrap; position: sticky; top: 0; z-index: 30; background: var(--background-primary); flex-shrink: 0; }
 .planner-board-wrapper .planner-board-filters { min-width: 0; flex-wrap: wrap; }
 .planner-board-wrapper .planner-filter-search { min-width: 80px; max-width: 240px; }
 .planner-board-wrapper .planner-board-container { min-width: 0; overflow-x: hidden; }
@@ -4827,10 +4832,10 @@ td.planner-rolled-up::after {
   line-height: 1.3;
 }
 
-/* Fixed inbox and independently scrollable weeks. */
+/* Content-height columns; the board page owns vertical scrolling. */
 .planner-board-wrapper .lrp-board-layout {
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -4846,7 +4851,7 @@ td.planner-rolled-up::after {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  height: 100%;
+  height: auto;
 }
 .planner-board-wrapper .lrp-weeks-pane {
   display: flex;
@@ -4856,12 +4861,13 @@ td.planner-rolled-up::after {
   flex: 1;
 }
 .planner-board-wrapper .lrp-weeks-pane > .planner-board-container {
+  flex: 0 0 auto;
   overflow-x: auto;
   min-height: 0;
   scrollbar-width: none;
 }
 .planner-board-wrapper .lrp-weeks-pane > .planner-board-container::-webkit-scrollbar { height: 0; }
-.planner-board-wrapper .lrp-weeks-pane .planner-board-column { height: 100%; }
+.planner-board-wrapper .lrp-weeks-pane .planner-board-column { height: auto; min-height: 220px; max-height: 820px; }
 .planner-board-wrapper .lrp-board-scrollbar {
   flex: 0 0 16px;
   height: 16px;
@@ -4956,21 +4962,23 @@ td.planner-rolled-up::after {
 .setting-item-info .lrp-help-body .setting-item-description { margin: 0; }
 
 /* Related task controls are grouped into clearly separated cards. */
-.planner-detail-wrapper .lrp-detail-cards { display: flex; flex-direction: column; gap: 22px; padding: 8px 0 24px; }
+.planner-detail-wrapper .lrp-detail-cards { display: flex; flex-direction: column; gap: 24px; padding: 6px 0 28px; }
 .planner-detail-wrapper .lrp-detail-card {
   border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  padding: 18px;
+  border-radius: 14px;
+  padding: 20px;
   background: var(--background-primary);
-  box-shadow: 0 2px 6px rgba(70, 40, 90, 0.035);
+  box-shadow: 0 2px 8px rgba(70, 40, 90, 0.04);
   min-width: 0;
 }
-.planner-detail-wrapper .lrp-detail-card-title { font-size: 15px; font-weight: 650; color: var(--text-muted); margin: 0 0 18px; letter-spacing: .03em; }
-.planner-detail-wrapper .lrp-detail-card-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 22px 18px; }
-.planner-detail-wrapper .lrp-detail-field { min-width: 0; }
-.planner-detail-wrapper .lrp-detail-field > .lrp-help-toggle { margin: 0 0 12px; }
+.planner-detail-wrapper .lrp-detail-card-title { font-size: 14px; font-weight: 650; color: var(--text-muted); margin: 0 0 20px; letter-spacing: .04em; }
+.planner-detail-wrapper .lrp-detail-card-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 26px 20px; }
+/* One vertical rhythm per field: label, optional badge/help, then the control. */
+.planner-detail-wrapper .lrp-detail-field { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.planner-detail-wrapper .lrp-detail-field > * { margin-top: 0; margin-bottom: 0; }
+.planner-detail-wrapper .lrp-detail-field > .lrp-help-toggle { margin: 0; }
 .planner-detail-wrapper .lrp-detail-field h2,
-.planner-detail-wrapper .lrp-detail-field h3 { font-size: 17px; line-height: 1.4; margin: 0; }
+.planner-detail-wrapper .lrp-detail-field h3 { font-size: 16px; line-height: 1.45; font-weight: 600; margin: 0; }
 .planner-detail-wrapper .lrp-detail-field[data-key="任务名称"],
 .planner-detail-wrapper .lrp-detail-field[data-key="说明"],
 .planner-detail-wrapper .lrp-detail-field[data-key="标签"],
@@ -4981,7 +4989,14 @@ td.planner-rolled-up::after {
 .planner-detail-wrapper .lrp-detail-field .planner-effort-section,
 .planner-detail-wrapper .lrp-detail-field .planner-cost-section { margin: 0; padding: 0; border: none; }
 .planner-detail-wrapper .lrp-detail-field input:not([type="checkbox"]):not([type="color"]),
-.planner-detail-wrapper .lrp-detail-field select { width: 100%; min-width: 0; box-sizing: border-box; }
+.planner-detail-wrapper .lrp-detail-field select { width: 100%; min-width: 0; min-height: 34px; padding: 7px 10px; border-radius: 8px; box-sizing: border-box; }
+.planner-detail-wrapper .lrp-detail-field textarea { width: 100%; min-height: 96px; padding: 9px 10px; border-radius: 8px; box-sizing: border-box; }
+/* Status keeps its compact pill, but gets air before the editable select. */
+.planner-detail-wrapper .lrp-detail-field > .status-pill,
+.planner-detail-wrapper .lrp-detail-field > button { align-self: flex-start; }
+.planner-detail-wrapper .lrp-detail-field > .setting-item-description { font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.planner-detail-wrapper .lrp-detail-field .planner-duration-row { display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.planner-detail-wrapper .lrp-detail-field .planner-duration-value { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; }
 
 /* Readable calendar, using more of the available area. */
 .planner-myday-wrapper .myday-month-scroll { padding: 8px 6px 18px; }
@@ -5065,7 +5080,8 @@ td.planner-rolled-up::after {
 .lrp-all-project-list { flex: 1; min-height: 0; overflow: auto; padding-bottom: 20px; }
 .lrp-all-project-section { margin-bottom: 24px; border: 1px solid var(--background-modifier-border); border-radius: 10px; overflow: hidden; }
 .lrp-all-project-heading { margin: 0; padding: 13px 16px; border-left: 6px solid var(--lrp-project-color); background: color-mix(in srgb, var(--lrp-project-color) 14%, var(--background-primary)); font-size: 17px; }
-.lrp-all-project-view { height: 510px; min-width: 0; overflow: hidden; }
+.lrp-all-project-view { height: auto; min-width: 0; overflow: visible; }
+.lrp-all-project-view .planner-board-wrapper { height: auto; overflow: visible; }
 .lrp-all-project-view .planner-board-column { min-height: 0; }
 
 .lrp-personal-progress { display: flex; flex-direction: column; gap: 14px; }
@@ -5413,8 +5429,8 @@ td.planner-rolled-up::after {
 .planner-board-wrapper .planner-board-column-unassigned .planner-board-column-header { background: var(--background-secondary) !important; }
 .planner-board-wrapper .planner-board-column-title { font-size: 17px; font-style: normal !important; }
 .planner-board-wrapper .planner-board-column-count { background: color-mix(in srgb,var(--lrp-bucket-color,#ddd5e7) 28%,var(--background-primary)); }
-.planner-board-wrapper .planner-board-column-content { padding: 14px 12px; }
-.planner-board-wrapper .planner-board-add-card { border-width: 1px; border-radius: 9px; padding: 12px; margin-bottom: 12px; }
+.planner-board-wrapper .planner-board-column-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px; }
+.planner-board-wrapper .planner-board-add-card { border-width: 1px; border-radius: 9px; padding: 10px; margin-bottom: 0; }
 
 /* Resist theme button fills: the bar's entire surface belongs to its node color. */
 .lrp-time-bar { background-color: color-mix(in srgb,var(--lrp-node-color) 20%,var(--background-primary)) !important; background-image: none !important; border-color: color-mix(in srgb,var(--lrp-node-color) 65%,var(--background-modifier-border)) !important; border-left: 6px solid var(--lrp-node-color) !important; box-shadow: none !important; color: var(--text-normal) !important; }
@@ -5614,9 +5630,9 @@ td.planner-rolled-up::after {
 
 /* Give each board subtask its own title and date lines, without squeezing the title. */
 .planner-board-wrapper .planner-board-card-checklist { gap: 14px; padding: 10px 8px; }
-.planner-board-wrapper .planner-board-checklist-item { display: grid; grid-template-columns: 18px minmax(0,1fr); column-gap: 10px; row-gap: 4px; align-items: start; }
-.planner-board-wrapper .planner-board-checklist-checkbox { margin-top: 5px; }
-.planner-board-wrapper .planner-board-checklist-label { min-width: 0; }
+.planner-board-wrapper .planner-board-checklist-item { display: grid; grid-template-columns: 18px minmax(0,1fr) auto; column-gap: 10px; row-gap: 4px; align-items: center; }
+.planner-board-wrapper .planner-board-checklist-checkbox { grid-column: 1; grid-row: 1; align-self: center; margin: 0 !important; }
+.planner-board-wrapper .planner-board-checklist-label { grid-column: 2; grid-row: 1; align-self: center; min-width: 0; }
 .planner-board-wrapper .lrp-subtask-card-date { grid-column: 2; margin-left: 0; font-size: 12px; line-height: 1.5; }
 .planner-board-wrapper .planner-board-card-footer { gap: 10px 14px; margin-top: 14px; padding-top: 12px; font-size: 15px; }
 .planner-board-wrapper .planner-board-card-footer :is(.planner-board-card-date,.planner-board-card-subtasks) { font-size: 15px; line-height: 1.5; }
@@ -5647,7 +5663,7 @@ td.planner-rolled-up::after {
 .lrp-project-finder-shell { display: flex; flex: 1; min-height: 0; min-width: 0; gap: 20px; overflow: hidden; }
 .lrp-project-finder { flex: 0 0 200px; min-width: 0; overflow-y: auto; padding: 14px 8px; }
 .lrp-project-finder h3 { margin: 0 0 12px; font-size: 16px; }
-.lrp-project-finder input,.lrp-project-finder select { display: block; width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+.lrp-project-finder > input,.lrp-project-finder > select { display: block; width: 100%; box-sizing: border-box; margin-bottom: 10px; }
 .lrp-project-finder-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .lrp-project-finder-list button { height: auto; padding: 10px; white-space: normal; text-align: left; justify-content: flex-start; border-left: 4px solid var(--lrp-project-color); background: var(--background-primary); box-shadow: none; border-radius: 8px; }
 .lrp-project-finder-list button[aria-pressed="true"] { background: color-mix(in srgb,var(--lrp-project-color) 12%,var(--background-primary)); font-weight: 700; }
@@ -5655,10 +5671,551 @@ td.planner-rolled-up::after {
 .lrp-project-finder-content > .lrp-project-finder-focused { outline: 2px solid var(--lrp-project-color,var(--lrp-dependency-color)); outline-offset: 3px; box-shadow: 0 5px 18px color-mix(in srgb,var(--lrp-project-color,var(--lrp-dependency-color)) 20%,transparent); }
 .lrp-project-finder-empty { font-size: 13px; color: var(--text-muted); padding: 16px 0; }
 .lrp-project-finder-empty[hidden],.lrp-dependency-project[hidden] { display: none !important; }
+
+/* Manage mode: checkboxes replace the focus buttons, the same header button deletes the selection. */
+.lrp-project-finder-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; row-gap: 6px; margin-bottom: 12px; }
+.lrp-project-finder-header h3 { margin: 0; white-space: nowrap; }
+.lrp-project-finder.is-managing { flex-basis: 224px; }
+.lrp-project-finder-manage-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.lrp-project-finder-manage,.lrp-project-finder-cancel { height: 26px; padding: 0 9px; font-size: 12px; border-radius: 7px; box-shadow: none; background: transparent; border: 1px solid var(--background-modifier-border); }
+.lrp-project-finder-manage:hover,.lrp-project-finder-cancel:hover { background: var(--background-secondary); }
+.lrp-project-finder-manage.is-danger { background: var(--background-modifier-error); border-color: transparent; color: var(--text-on-accent); }
+.lrp-project-finder-manage:disabled { opacity: .55; cursor: not-allowed; }
+.lrp-project-finder-cancel[hidden] { display: none !important; }
+.lrp-project-finder-manage-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-left: 4px solid var(--lrp-project-color); border-radius: 8px; background: var(--background-primary); cursor: pointer; }
+.lrp-project-finder-manage-row:hover { background: color-mix(in srgb,var(--lrp-project-color) 12%,var(--background-primary)); }
+.lrp-project-finder-manage-row input { margin: 0; flex-shrink: 0; }
+.lrp-project-finder-manage-name { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.lrp-delete-project-list { margin: 8px 0 12px; padding-left: 22px; max-height: 220px; overflow-y: auto; }
+.lrp-delete-project-hint { color: var(--text-muted); font-size: 13px; }
+.lrp-delete-project-error { color: var(--text-error); font-size: 13px; min-height: 1.2em; }
+.lrp-delete-project-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .lrp-dependency-project-header { cursor: pointer; }
-@media(max-width: 900px) { .lrp-project-finder { flex-basis: 160px; } .lrp-project-finder-shell { gap: 12px; } }
+@media(max-width: 900px) { .lrp-project-finder { flex-basis: 160px; } .lrp-project-finder.is-managing { flex-basis: 188px; } .lrp-project-finder-shell { gap: 12px; } }
 
 .lrp-portfolio-heading-controls { display: flex; align-items: center; gap: 20px; min-width: 0; flex-wrap: wrap; }
 .lrp-portfolio-heading-controls > h3 { white-space: nowrap; }
 .lrp-portfolio-heading-controls > .lrp-portfolio-filters { align-items: center; flex-wrap: nowrap; margin: 0; padding: 0; }
 .lrp-portfolio-heading-controls .lrp-category-settings > summary { white-space: nowrap; }
+
+/* Shared header project creation */
+.planner-new-project-btn { white-space: nowrap; padding: 6px 14px; }
+.lrp-new-project-form label { display: flex; flex-direction: column; gap: 10px; }
+.lrp-new-project-form input { width: 100%; }
+.lrp-new-project-error { color: var(--text-error); min-height: 1.5em; margin-top: 8px; }
+.lrp-new-project-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+
+/* One project brief card, with simple sections inside. */
+.lrp-project-overview { flex-shrink: 0; margin: 14px 0 20px; padding: 16px 20px; border: 1px solid color-mix(in srgb,var(--lrp-project-color,#9874b5) 35%,var(--background-modifier-border)); border-left: 4px solid var(--lrp-project-color,#9874b5); border-radius: 12px; background: color-mix(in srgb,var(--lrp-project-color,#9874b5) 4%,var(--background-primary)); grid-column: 1 / -1; }
+.lrp-project-overview > summary { cursor: pointer; font-size: 16px; font-weight: 600; color: var(--text-normal); }
+.lrp-project-overview-duration { float: right; display: inline-flex; align-items: baseline; gap: 6px; margin-left: 16px; font-size: 13px; font-weight: 500; color: var(--text-muted); line-height: 1.7; }
+.lrp-project-overview-duration-value { color: var(--text-normal); font-weight: 600; }
+.lrp-project-summary-tags { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 3em; vertical-align: middle; }
+.lrp-project-summary-tag { height: auto; padding: 3px 8px; border: 0 !important; border-radius: 4px; background: var(--lrp-tag-color,#d9c4e8); color: #000 !important; font-size: 12px; font-weight: 500; line-height: 1.6; box-shadow: none !important; cursor: pointer; }
+.lrp-project-summary-tag:hover { filter: brightness(.96); }
+.lrp-project-summary-tag:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.lrp-project-summary-tag-add { height: auto; padding: 3px 8px; border: 1px dashed var(--background-modifier-border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 12px; line-height: 1.6; box-shadow: none; cursor: pointer; }
+.lrp-project-summary-tag-add:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
+.lrp-project-tag-modal { overflow-x: hidden; }
+.lrp-project-tag-modal .planner-tag-container { padding: 4px 0; gap: 10px; }
+.lrp-project-tag-modal .planner-tag-select { width: 100%; max-width: 100%; }
+.lrp-project-tag-modal .lrp-inline-tag-create { flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.lrp-project-tag-modal .lrp-inline-tag-create input[type="text"] { flex: 0 1 220px; width: 220px; min-width: 120px; }
+.lrp-project-tag-modal .lrp-inline-tag-create button { flex: 0 0 auto; white-space: nowrap; }
+.lrp-project-tag-modal .lrp-new-project-actions { margin-top: 12px; justify-content: flex-end; }
+.planner-tag-inherited { cursor: default; }
+.lrp-project-overview > summary::after { content: ''; display: block; clear: both; }
+.lrp-project-overview-content { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 24px; margin: 10px 0; max-height: min(42vh,360px); overflow-y: auto; padding-right: 6px; align-items: stretch; }
+.lrp-project-overview-brief { grid-column: 1; }
+.lrp-project-overview-stage { grid-column: 2; grid-row: 1 / span 2; }
+.lrp-project-overview-section { padding: 16px 0 8px; min-width: 0; }
+.lrp-project-overview-section { border-top: 1px solid color-mix(in srgb,var(--lrp-project-color,#9874b5) 20%,var(--background-modifier-border)); }
+.lrp-project-overview-section h4 { margin: 0 0 8px; font-size: 14px; color: var(--text-normal); }
+.lrp-project-overview-section p { margin: 0; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-normal); }
+.lrp-project-overview-placeholder { color: var(--text-muted) !important; }
+.lrp-project-edit-btn { white-space: nowrap; font-size: 13px; }
+.lrp-all-project-heading > .lrp-project-edit-btn { float: right; margin-left: 16px; }
+.lrp-all-project-section > .lrp-project-overview,.lrp-dependency-project > .lrp-project-overview { flex-shrink: 0; margin: 16px 20px; }
+.lrp-project-overview-modal { width: min(760px,92vw); }
+.lrp-project-overview-form > label,.lrp-project-overview-field { display: flex; flex-direction: column; gap: 8px; }
+.lrp-project-overview-form input,.lrp-project-overview-form textarea { width: 100%; }
+.lrp-project-overview-form-fields { display: flex; flex-direction: column; gap: 18px; margin: 18px 0; }
+.lrp-project-overview-form textarea { resize: vertical; min-height: 90px; line-height: 1.7; }
+.lrp-project-duration-fields { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+.lrp-project-duration-fields label { display: flex; align-items: center; gap: 8px; }
+.lrp-project-duration-fields input { width: 80px; }
+.lrp-project-duration-editor > p { font-size: 13px; line-height: 1.6; }
+.dashboard-project-card > .lrp-project-overview { grid-row: 4; margin-bottom: 0; }
+
+/* Project scoring and review controls. */
+.lrp-scoring-settings { margin: 22px 0 8px; padding-top: 16px; border-top: 1px solid var(--background-modifier-border); }
+.lrp-scoring-toggle { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.lrp-scoring-toggle input { width: auto; }
+.lrp-scoring-weights { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px; }
+.lrp-scoring-weights[hidden] { display: none; }
+.lrp-scoring-weights label { display: flex; align-items: center; gap: 8px; }
+.lrp-scoring-weights input { width: 78px; }
+.lrp-scoring-settings p,.lrp-project-score-section > p { font-size: 13px; line-height: 1.7; }
+.lrp-subtask-score-form { display: flex; flex-direction: column; gap: 14px; }
+.lrp-subtask-score-form > label { display: flex; flex-direction: column; gap: 8px; }
+.lrp-subtask-score-form textarea { resize: vertical; line-height: 1.7; }
+.lrp-project-score-section { border-top: 1px solid color-mix(in srgb,var(--lrp-project-color) 20%,var(--background-modifier-border)); padding-top: 16px; margin-top: 8px; }
+.lrp-project-score-section h4 { margin: 0 0 12px; font-size: 15px; }
+.lrp-project-score-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 26px; font-size: 15px; line-height: 1.8; }
+.lrp-score-history summary { cursor: pointer; font-size: 14px; }
+.lrp-score-history-list { max-height: 320px; overflow: auto; padding-right: 8px; }
+.lrp-score-history-row { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 16px; padding: 14px 0; border-bottom: 1px solid var(--background-modifier-border); font-size: 14px; }
+.lrp-score-history-row > strong { overflow-wrap: anywhere; }
+.lrp-score-history-row > p { flex-basis: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.lrp-score-history-row > button { margin-left: auto; white-space: nowrap; }
+
+/* Compact score analysis, with shared category colors and aligned comparison rows. */
+.lrp-score-chip,.lrp-score-metric.is-regular,.lrp-score-comparison-cell.is-regular { --score-color: #287348; --score-bg: #e5f3e9; }
+.lrp-score-chip.is-exam,.lrp-score-metric.is-exam,.lrp-score-comparison-cell.is-exam { --score-color: #b23f48; --score-bg: #fbe9eb; }
+.lrp-score-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 28px; padding: 2px 8px; box-sizing: border-box; border: 1px solid color-mix(in srgb,var(--score-color) 25%,transparent); border-radius: 6px; background: var(--score-bg) !important; color: var(--score-color) !important; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; box-shadow: none; cursor: pointer; }
+.lrp-score-chip.is-pending { --score-color: var(--text-muted); --score-bg: var(--background-secondary); font-size: 12px; }
+.lrp-score-chip:disabled { opacity: .55; cursor: default; }
+.lrp-subtask-score-slot { grid-column: 3; grid-row: 1 / 3; align-self: center; display: flex; gap: 5px; }
+.lrp-task-score-slot { margin-left: auto; display: flex; gap: 6px; }
+.lrp-overview-scoring-form { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px 28px; border-top: 1px solid var(--background-modifier-border); padding-top: 14px; margin-top: 8px; }
+.lrp-overview-scoring-form .lrp-scoring-settings { display: contents; }
+.lrp-overview-scoring-form .lrp-scoring-toggle { grid-column: 1; grid-row: 1; }
+.lrp-overview-scoring-form .lrp-scoring-weights { grid-column: 1; grid-row: 2; }
+.lrp-overview-save-scoring { grid-column: 2; grid-row: 1; justify-self: end; }
+.lrp-overview-scoring-form > .lrp-project-edit-btn { grid-column: 2; grid-row: 2; justify-self: end; }
+.lrp-overview-scoring-form > .lrp-new-project-error { grid-column: 1 / -1; grid-row: 3; margin: 0; }
+.lrp-overview-scoring-form .lrp-scoring-settings > p { display: none; }
+.lrp-overview-scoring-form .lrp-scoring-weights { gap: 10px 20px; margin-top: 0; }
+.lrp-overview-scoring-form .lrp-new-project-error:empty { display: none; }
+.lrp-overview-scoring-form > button { font-size: 12px; }
+.dashboard-project-card > .lrp-score-analysis { grid-column: 1 / -1; grid-row: 4; border-top: 1px solid var(--background-modifier-border); padding-top: 14px; min-width: 0; }
+.lrp-score-analysis-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.lrp-score-analysis-heading h3 { margin: 0; font-size: 15px; }
+.lrp-score-analysis-heading > span { font-size: 12px; }
+.lrp-score-metrics { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.lrp-score-metric { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--score-bg,var(--background-secondary)); color: var(--score-color,var(--text-normal)); }
+.lrp-score-metric.is-total { --score-bg: color-mix(in srgb,var(--lrp-project-color,#9874b5) 18%,var(--background-primary)); border: 1px solid color-mix(in srgb,var(--lrp-project-color,#9874b5) 55%,var(--background-modifier-border)); padding: 12px 16px; }
+.lrp-score-metric.is-total strong { font-size: 32px; font-weight: 750; }
+.lrp-score-metric.is-total span { font-weight: 600; }
+.lrp-score-metric span { font-size: 13px; }
+.lrp-score-metric strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.lrp-score-comparison { max-height: 240px; overflow: auto; }
+.lrp-score-comparison-row { display: grid; grid-template-columns: minmax(110px,1fr) minmax(90px,1fr) minmax(90px,1fr); gap: 16px; align-items: center; min-height: 38px; padding: 4px 0; border-bottom: 1px solid var(--background-modifier-border); font-size: 13px; }
+.lrp-score-comparison-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrp-score-comparison-head { min-height: 26px; font-size: 12px; color: var(--text-muted); }
+.lrp-score-comparison-head > span:nth-child(2) { color: #287348; }
+.lrp-score-comparison-head > span:nth-child(3) { color: #b23f48; }
+.lrp-score-empty { min-height: 8px; }
+.lrp-score-comparison-cell { display: flex; align-items: center; gap: 10px; color: var(--score-color); }
+.lrp-score-comparison-cell strong { min-width: 42px; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+.lrp-score-comparison-cell progress { appearance: none; -webkit-appearance: none; flex: 1; width: 0; min-width: 20px; height: 8px; border: 0; border-radius: 4px; background: var(--score-bg); overflow: hidden; }
+.lrp-score-comparison-cell progress::-webkit-progress-bar { background: var(--score-bg); border-radius: 4px; }
+.lrp-score-comparison-cell progress::-webkit-progress-value { background: var(--score-color); border-radius: 4px; }
+.lrp-score-comparison-cell progress::-moz-progress-bar { background: var(--score-color); border-radius: 4px; }
+.lrp-subtask-score-form[data-category="regular"] input[type="number"] { background: #e5f3e9; color: #287348; }
+.lrp-subtask-score-form[data-category="exam"] input[type="number"] { background: #fbe9eb; color: #b23f48; }
+.lrp-project-overview-modal .modal-content { overflow-y: auto; }
+@media (max-width: 700px) {
+ .lrp-project-overview-content { grid-template-columns: minmax(0,1fr); }
+ .lrp-project-overview-brief,.lrp-project-overview-stage { grid-column: 1; grid-row: auto; }
+ .lrp-score-metric { flex-direction: column; align-items: flex-start; padding: 8px; }
+ .lrp-score-comparison-row { gap: 8px; }
+}
+
+.planner-board-wrapper .lrp-unassigned-fixed { display: flex; flex-direction: column; gap: 18px; max-height: 820px; }
+.planner-board-wrapper .lrp-unassigned-fixed > .planner-board-column { flex: 1 1 auto; min-height: 160px; height: auto; max-height: 700px; }
+.planner-board-wrapper .lrp-assessment-column { --lrp-bucket-color: #d7989e; }
+.lrp-assessment-column .lrp-new-project-error:empty { display: none; }
+.planner-board-wrapper .planner-board-completed-header { padding: 6px 8px; margin-top: 0; }
+.lrp-score-lists { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,280px),1fr)); gap: 14px 28px; }
+.lrp-score-category-list { --score-color: #287348; --score-bg: #e5f3e9; min-width: 0; }
+.lrp-score-category-list.is-exam { --score-color: #b23f48; --score-bg: #fbe9eb; }
+.lrp-score-category-list h4 { color: var(--score-color); margin: 0 0 6px; font-size: 12px; }
+.lrp-score-list-row { display: grid; grid-template-columns: minmax(80px,1fr) minmax(60px,1fr) 42px; align-items: center; gap: 12px; min-height: 36px; font-size: 13px; }
+.lrp-score-list-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrp-score-list-row strong { color: var(--score-color); text-align: right; font-variant-numeric: tabular-nums; }
+.lrp-score-list-row progress { appearance: none; -webkit-appearance: none; width: 100%; height: 7px; border: 0; border-radius: 4px; overflow: hidden; background: var(--score-bg); }
+.lrp-score-list-row progress::-webkit-progress-bar { background: var(--score-bg); }
+.lrp-score-list-row progress::-webkit-progress-value { background: var(--score-color); border-radius: 4px; }
+.lrp-score-list-row progress::-moz-progress-bar { background: var(--score-color); }
+
+.lrp-bucket-calendar-label { font-size: 12px; font-weight: 400; white-space: nowrap; }
+.planner-board-wrapper .lrp-bucket-monday { padding: 2px 4px; background: transparent; border: 0; box-shadow: none; font-size: 12px; color: inherit; white-space: nowrap; }
+.lrp-week-schedule-form { display: flex; flex-direction: column; gap: 16px; }
+.lrp-week-schedule-form > label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lrp-week-schedule-form input[type="number"] { width: 90px; }
+.lrp-week-skip { justify-content: flex-start !important; }
+
+.planner-board-wrapper { overflow-anchor: none; scrollbar-gutter: stable; }
+.planner-board-wrapper .planner-board-column-content { overflow-anchor: none; }
+.planner-board-wrapper .planner-board-toolbar::before { display: none; }
+.planner-board-wrapper .lrp-unassigned-fixed { height: 820px; min-height: 0; flex-shrink: 0; }
+.planner-board-wrapper .lrp-unassigned-fixed > .planner-board-column { flex: 1 1 0; min-height: 0; max-height: none; }
+.planner-board-wrapper .lrp-unassigned-fixed > .lrp-pinned-collapsed { flex: 0 0 54px; min-height: 54px; }
+.planner-board-wrapper .lrp-pinned-collapsed .planner-board-column-header { min-height: 54px; height: 54px; padding: 10px 14px; line-height: 1.4; align-items: center; box-sizing: border-box; border-bottom: 0 !important; }
+.planner-board-wrapper .lrp-pinned-collapsed .planner-board-column-content { display: none; }
+.lrp-pinned-toggle { border: 0; box-shadow: none; background: transparent; padding: 2px 4px; color: inherit; }
+.lrp-dashboard-cost-section { grid-column: 1 / -1 !important; }
+.lrp-dashboard-cost-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.lrp-dashboard-cost-heading h3 { margin: 0; }
+.planner-dashboard-wrapper .lrp-dashboard-cost-grid { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 12px; }
+.lrp-dashboard-cost-grid > .dashboard-kpi-card { flex: 0 1 190px; }
+.lrp-cost-cell-button { padding: 3px 6px; background: transparent; border: 0; box-shadow: none; color: inherit; }
+.lrp-cost-editor { display: flex; flex-direction: column; gap: 14px; }
+.lrp-cost-editor > label { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.lrp-cost-editor > label[hidden] { display: none; }
+.lrp-cost-editor input { max-width: 160px; }
+button.lrp-score-metric { box-shadow: none; height: auto; border: 1px solid transparent; text-align: left; cursor: pointer; }
+button.lrp-score-metric:hover { filter: brightness(.97); }
+.lrp-score-analysis-modal { width: min(640px,90vw); }
+.lrp-score-analysis-modal .modal-content { max-height: 60vh; overflow-y: auto; }
+
+.lrp-detail-card:has(.planner-cost-section) > .lrp-detail-card-title { display: none; }
+
+/* Score categories keep their semantic colors even under theme button fills. */
+.planner-dashboard-wrapper button.lrp-score-metric.is-regular { background: #e5f3e9 !important; color: #287348 !important; }
+.planner-dashboard-wrapper button.lrp-score-metric.is-exam { background: #fbe9eb !important; color: #b23f48 !important; }
+.planner-dashboard-wrapper button.lrp-score-metric.is-regular :is(span,strong) { color: #287348 !important; }
+.planner-dashboard-wrapper button.lrp-score-metric.is-exam :is(span,strong) { color: #b23f48 !important; }
+.planner-board-wrapper > .lrp-project-overview { margin-bottom: 12px; overflow: visible; }
+.planner-board-wrapper .planner-board-toolbar { margin-top: 0; padding-top: 8px; padding-bottom: 8px; top: 0; }
+.planner-board-wrapper .lrp-pinned-collapsed .planner-board-column-title { line-height: 1.4; padding: 0; margin: 0; }
+.planner-board-wrapper .lrp-pinned-collapsed .planner-board-column-count { line-height: 28px; min-height: 28px; padding: 0 8px; }
+.planner-board-wrapper .lrp-pinned-toggle { height: 28px !important; min-height: 28px; width: 28px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; background: transparent !important; box-shadow: none !important; line-height: 1; }
+.planner-dashboard-wrapper .lrp-cost-positive { color: #b23f48 !important; }
+.planner-dashboard-wrapper .lrp-cost-negative { color: #287348 !important; }
+.planner-dashboard-wrapper .lrp-cost-metric { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; height: auto; padding: 16px; min-width: 135px; text-align: left; box-shadow: none; }
+.planner-dashboard-wrapper .lrp-cost-metric .dashboard-kpi-value { font-size: 24px; }
+.lrp-cost-note-editor { box-sizing: border-box; width: min(360px,100%); margin: 14px 0 0 auto; padding: 16px; border: 1px solid var(--background-modifier-border); border-radius: 10px; background: var(--background-secondary); }
+.lrp-cost-note-editor[hidden] { display: none; }
+.lrp-cost-note-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.lrp-cost-analysis-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.lrp-cost-analysis-table :is(th,td) { padding: 10px; border-bottom: 1px solid var(--background-modifier-border); text-align: right; }
+.lrp-cost-analysis-table :is(th,td):first-child { text-align: left; }
+.lrp-cost-analysis-table .lrp-cost-positive { color: #b23f48; }
+.lrp-cost-analysis-table .lrp-cost-negative { color: #287348; }
+
+.planner-board-wrapper { padding-top: 12px; scroll-padding-top: 0; isolation: isolate; }
+
+.planner-dashboard-wrapper button.lrp-score-metric.is-total { background: var(--lrp-project-color) !important; border-color: var(--lrp-project-color) !important; }
+.planner-dashboard-wrapper button.lrp-score-metric.is-total :is(span,strong) { color: white !important; }
+.planner-board-wrapper > .lrp-project-overview { margin-top: 0; }
+.planner-board-wrapper .lrp-board-layout { padding-top: 20px; }
+.lrp-project-review-section { grid-column: 1 / -1; padding-top: 16px; border-top: 1px solid var(--background-modifier-border); }
+.lrp-project-review-section h3 { margin: 0 0 12px; font-size: 16px; }
+.lrp-project-review-section textarea { display: block; width: 100%; min-height: 100px; box-sizing: border-box; margin-bottom: 10px; resize: vertical; }
+.lrp-analysis-band { display: flex; align-items: center; gap: 16px; padding: 16px; border-radius: 9px; margin: 16px 0 22px; background: color-mix(in srgb,var(--lrp-project-color) 16%,var(--background-primary)); }
+.lrp-analysis-band strong { font-size: 30px; font-variant-numeric: tabular-nums; }
+.lrp-analysis-band.is-regular { background: #e5f3e9; color: #287348; }
+.lrp-analysis-band.is-exam { background: #fbe9eb; color: #b23f48; }
+.lrp-weighted-analysis-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.lrp-weighted-analysis-table :is(th,td) { text-align: left; padding: 12px 6px; border-bottom: 1px solid var(--background-modifier-border); }
+.lrp-weighted-analysis-table progress { display: inline-block; margin-left: 10px; width: 90px; height: 8px; accent-color: var(--lrp-project-color); }
+.lrp-rank-row { display: grid; grid-template-columns: 26px minmax(100px,1fr) minmax(80px,1fr) 40px; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--background-modifier-border); font-size: 14px; }
+.lrp-rank-index { background: #e5f3e9; color: #287348; border-radius: 6px; text-align: center; padding: 3px; }
+.lrp-rank-row progress { width: 100%; height: 10px; accent-color: #287348; }
+.lrp-rank-row strong { color: #287348; text-align: right; }
+.lrp-exam-chart-scroll { overflow-x: auto; padding-top: 8px; }
+.lrp-score-analysis-modal { width: min(720px,92vw); }
+
+.planner-board-wrapper .lrp-board-layout { margin-top: 8px; }
+.lrp-weighted-analysis-table progress,.lrp-rank-row progress { appearance: none; -webkit-appearance: none; border: 0; border-radius: 5px; overflow: hidden; }
+.lrp-weighted-analysis-table progress::-webkit-progress-bar { background: color-mix(in srgb,var(--lrp-project-color) 16%,var(--background-primary)); }
+.lrp-weighted-analysis-table progress::-webkit-progress-value { background: var(--lrp-project-color); border-radius: 5px; }
+.lrp-weighted-analysis-table progress::-moz-progress-bar { background: var(--lrp-project-color); }
+.lrp-rank-row progress::-webkit-progress-bar { background: #e5f3e9; }
+.lrp-rank-row progress::-webkit-progress-value { background: #287348; border-radius: 5px; }
+.lrp-rank-row progress::-moz-progress-bar { background: #287348; }
+
+/* Keep the shared header outside the board's scrolling surface. */
+.planner-board-wrapper { overflow: hidden; scrollbar-gutter: auto; }
+.lrp-board-page { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; }
+.lrp-board-page > .lrp-project-overview { margin-top: 0; margin-bottom: 12px; }
+.lrp-all-project-view .lrp-board-page { overflow: visible; flex: 0 0 auto; }
+.planner-header > .lrp-header-context { grid-column: 1; grid-row: 1; order: 0; }
+.planner-header > .planner-view-switcher { grid-column: 2; grid-row: 1; order: 0; }
+.planner-header > .planner-header-actions { grid-column: 3; grid-row: 1; order: 0; }
+@media (max-width: 1050px) {
+ .planner-header > .planner-view-switcher { grid-column: 1 / -1; grid-row: 2; }
+ .planner-header > .planner-header-actions { grid-column: 2; grid-row: 1; }
+}
+.lrp-score-analysis-content { text-align: center; }
+.lrp-score-analysis-content .lrp-analysis-band { justify-content: center; flex-wrap: wrap; padding: 12px; gap: 12px; margin: 12px 0 18px; }
+.lrp-score-analysis-content .lrp-weighted-analysis-table :is(th,td) { text-align: center; padding: 10px 5px; }
+.lrp-score-analysis-content .lrp-weighted-analysis-table progress { width: 70px; margin-left: 8px; }
+.lrp-score-analysis-content .lrp-rank-row { text-align: center; grid-template-columns: 26px minmax(90px,1fr) minmax(70px,1fr) 36px; gap: 8px; }
+.lrp-score-analysis-modal .modal-content > h3 { text-align: center; margin: 8px 0 16px; }
+.planner-dashboard-wrapper .dashboard-project-card { font-size: 16px; row-gap: 14px; }
+.planner-dashboard-wrapper .dashboard-kpi-title { font-size: 15px; }
+.planner-dashboard-wrapper .lrp-score-metric span { font-size: 15px; }
+.planner-dashboard-wrapper .lrp-dashboard-cost-section { margin: 0; padding-bottom: 0; }
+.planner-dashboard-wrapper .lrp-dashboard-cost-grid { margin-bottom: 0; }
+.lrp-cost-note-editor[hidden] { margin: 0; padding: 0; }
+.lrp-project-review-section { padding-top: 14px; margin-top: 0; }
+.lrp-project-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.lrp-project-review-heading h3 { margin: 0; }
+.lrp-project-review-body { padding: 16px; border-radius: 10px; background: color-mix(in srgb,var(--lrp-project-color) 6%,var(--background-primary)); font-size: 17px; font-weight: 600; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.planner-dashboard-wrapper .lrp-cost-metric,.planner-dashboard-wrapper .lrp-project-review-body { background: color-mix(in srgb,var(--lrp-project-color) 6%,var(--background-primary)) !important; }
+
+.lrp-exam-chart-scroll svg { display: block; margin-inline: auto; }
+.lrp-score-analysis-content .lrp-analysis-band { margin-top: 4px; }
+
+/* Project groups share the same controls in views 1, 4 and 6. */
+.lrp-project-menu.lrp-grouped-project-menu { flex-direction: row; align-items: flex-start; width: max-content; max-width: min(660px,calc(100vw - 52px)); max-height: min(440px,65vh); gap: 10px; }
+.lrp-project-group-navigation { display: flex; flex-direction: column; gap: 6px; min-width: 150px; max-width: 220px; }
+.lrp-grouped-project-menu .lrp-project-group-navigation button { border-left: 0; white-space: normal; text-align: left; }
+.lrp-project-group-navigation button[aria-expanded="true"] { background: var(--interactive-accent); color: var(--text-on-accent); }
+.lrp-project-group-flyout { width: 260px; min-width: 0; display: flex; flex-direction: column; gap: 7px; padding-left: 10px; border-left: 1px solid var(--background-modifier-border); }
+.lrp-project-group-flyout[hidden] { display: none; }
+.lrp-project-menu .lrp-project-group-flyout button { white-space: normal; overflow-wrap: anywhere; text-align: left; height: auto; }
+.lrp-project-group-heading { padding: 7px 5px; font-weight: 700; }
+.lrp-project-group-empty { color: var(--text-muted); padding: 12px 5px; }
+.lrp-project-finder-group { margin: 0; padding: 0; }
+.lrp-project-finder-group > summary { display: list-item; cursor: pointer; padding: 9px 5px; font-size: 15px; font-weight: 650; color: var(--text-normal); }
+.lrp-project-group-count { float: right; font-size: 12px; color: var(--text-muted); margin-left: 8px; }
+.lrp-project-finder-group > button { display: flex; width: calc(100% - 12px); margin: 5px 0 8px 12px; overflow-wrap: anywhere; }
+.lrp-project-finder-list button.is-ended,.lrp-project-menu button.is-ended { color: var(--text-muted); background: var(--background-secondary); border-left-color: var(--text-faint); }
+.lrp-dashboard-finder > input,.lrp-dashboard-finder > select { display: block; width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+.lrp-dashboard-finder .lrp-project-finder-header h3 { margin: 0; }
+.modal.lrp-manage-projects-modal { width: min(660px,92vw); max-width: calc(100vw - 32px); }
+.lrp-manage-projects-modal .modal-content { max-height: 76vh; overflow-y: auto; overflow-x: hidden; padding: 4px; }
+.lrp-management-section { margin-top: 22px; }
+.lrp-management-section h3 { margin: 0 0 12px; }
+.lrp-management-form { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin: 9px 0; }
+.lrp-manage-projects-modal .lrp-management-form input[type="text"] { flex: 0 1 240px; width: 240px; min-width: 0; max-width: 100%; }
+.lrp-management-form select { max-width: 200px; }
+.lrp-management-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lrp-management-project-group { margin: 15px 0; border: 1px solid var(--background-modifier-border); border-radius: 10px; padding: 10px 14px; }
+.lrp-management-project-group > summary { cursor: pointer; font-weight: 650; padding: 5px 0; }
+.lrp-management-project-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--background-modifier-border); }
+.lrp-management-project-row label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; overflow-wrap: anywhere; }
+.lrp-management-project-row label input { flex: 0 0 auto; }
+.lrp-management-project-row select { max-width: 42%; }
+@media(max-width:600px) { .lrp-project-group-navigation { min-width: 110px; }.lrp-project-group-flyout { width: 180px; } }
+
+/* Soft, contained focus states: no native outline crosses a clipped modal edge. */
+.lrp-manage-projects-modal :is(input[type="text"],select) {
+ box-sizing: border-box; min-height: 40px; height: 40px; padding: 8px 12px;
+ border: 1px solid color-mix(in srgb,var(--interactive-accent) 25%,var(--background-modifier-border));
+ border-radius: 10px; background-color: var(--background-primary); color: var(--text-normal); font-size: 15px;
+ box-shadow: none; transition: border-color .12s ease,background-color .12s ease;
+}
+.lrp-manage-projects-modal select { min-width: 110px; max-width: 180px; padding-right: 28px; }
+.lrp-manage-projects-modal :is(input[type="text"],select):focus,
+.lrp-manage-projects-modal :is(input[type="text"],select):focus-visible {
+ outline: none !important; outline-offset: 0 !important;
+ border-color: color-mix(in srgb,var(--interactive-accent) 65%,var(--background-modifier-border));
+ box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--interactive-accent) 38%,transparent) !important;
+ background-color: color-mix(in srgb,var(--interactive-accent) 5%,var(--background-primary));
+}
+.lrp-manage-projects-modal .lrp-management-form { gap: 10px; padding: 2px 0; }
+.lrp-manage-projects-modal button { min-height: 36px; border-radius: 9px; }
+@media(max-width:520px) {
+ .lrp-manage-projects-modal .lrp-management-form input[type="text"] { flex-basis: 200px; width: 200px; }
+ .lrp-manage-projects-modal .lrp-management-project-row { flex-wrap: wrap; }
+}
+
+/* Keep group actions beside their title and balance header/row spacing. */
+.lrp-manage-projects-modal .lrp-management-project-group { padding: 8px 14px; }
+.lrp-management-project-group > .lrp-management-group-heading {
+ display: flex; align-items: center; gap: 12px; padding: 7px 0 13px; min-height: 44px; list-style: none;
+}
+.lrp-management-group-heading::-webkit-details-marker { display: none; }
+.lrp-management-group-heading::before { content: '▸'; flex: 0 0 10px; font-size: 13px; }
+.lrp-management-project-group[open] > .lrp-management-group-heading::before { content: '▾'; }
+.lrp-management-group-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.lrp-management-group-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.lrp-manage-projects-modal .lrp-management-group-actions button { min-height: 30px; height: 30px; padding: 4px 9px; font-size: 13px; }
+.lrp-manage-projects-modal .lrp-management-group-rename[hidden] { display: none !important; }
+.lrp-manage-projects-modal .lrp-management-project-row { padding: 6px 0; gap: 10px; }
+.lrp-management-project-row label { margin: 0; }
+.lrp-manage-projects-modal .lrp-management-project-row select { min-height: 34px; height: 34px; padding-top: 5px; padding-bottom: 5px; }
+.lrp-management-project-group:not([open]) > .lrp-management-group-heading { padding-bottom: 7px; }
+@media(max-width:420px) {
+ .lrp-management-project-group > .lrp-management-group-heading { flex-wrap: wrap; gap: 8px; }
+ .lrp-management-group-actions { margin-left: auto; }
+}
+
+/* Shared experience primitives, scoped to this plugin's surfaces and modals. */
+.planner-header,.lrp-ui-modal {
+ --lrp-space-1: 8px; --lrp-space-2: 12px; --lrp-space-3: 16px; --lrp-space-4: 24px;
+ --lrp-control-height: 36px; --lrp-control-radius: 9px;
+ --lrp-control-border: color-mix(in srgb,var(--interactive-accent) 25%,var(--background-modifier-border));
+}
+:is(.planner-grid-wrapper,.planner-board-wrapper,.planner-dashboard-wrapper,.planner-myday-wrapper,.planner-graph-wrapper,.lrp-all-projects-wrapper,.lrp-timeline-v2-wrapper,.lrp-portfolio-wrapper) {
+ box-sizing: border-box; padding-top: 12px; padding-left: 18px; padding-right: 18px;
+}
+.planner-header { margin-top: 0; margin-bottom: var(--lrp-space-3); padding-bottom: var(--lrp-space-3); min-height: 54px; align-items: center; }
+.planner-header :is(.planner-view-switcher,.planner-header-actions,.lrp-header-context) { align-self: center; }
+.planner-header button { min-height: var(--lrp-control-height); border-radius: var(--lrp-control-radius); }
+.planner-header .planner-view-btn svg { width: 20px; height: 20px; flex: 0 0 20px; }
+.planner-header .planner-view-btn { display: inline-flex; justify-content: center; align-items: center; }
+.modal.lrp-ui-modal { box-sizing: border-box; max-width: calc(100vw - 32px); max-height: 88vh; border-radius: 16px; }
+.modal.lrp-ui-modal-small { width: min(440px,92vw); }
+.modal.lrp-ui-modal-medium { width: min(660px,92vw); }
+.modal.lrp-ui-modal-large { width: min(760px,92vw); }
+.lrp-ui-modal .modal-content { min-width: 0; max-height: 76vh; overflow: auto; overscroll-behavior: contain; padding: 4px; }
+.lrp-ui-modal :is(h2,h3) { line-height: 1.4; }
+.lrp-ui-modal .modal-content > :is(h2,h3) { margin-top: 4px; margin-bottom: var(--lrp-space-3); }
+.lrp-ui-modal button { min-height: var(--lrp-control-height); border-radius: var(--lrp-control-radius); }
+.lrp-ui-modal :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),select,textarea) {
+ box-sizing: border-box; max-width: 100%; border-radius: var(--lrp-control-radius); border: 1px solid var(--lrp-control-border);
+ background-color: var(--background-primary); color: var(--text-normal); font-size: 15px;
+}
+.lrp-ui-modal :is(input[type="text"],input[type="number"],input[type="date"],input[type="week"],select) { min-height: 36px; padding: 6px 10px; }
+.lrp-ui-modal textarea { padding: 10px 12px; line-height: 1.65; resize: vertical; }
+.lrp-ui-modal :is(input,select,textarea):focus-visible {
+ outline: none !important;
+ border-color: color-mix(in srgb,var(--interactive-accent) 65%,var(--background-modifier-border));
+ box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--interactive-accent) 38%,transparent) !important;
+}
+.lrp-ui-modal :is(button,summary):focus-visible,.planner-header :is(button,summary):focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.lrp-ui-modal :is(.lrp-new-project-actions,.lrp-project-overview-actions) { display: flex; flex-wrap: wrap; gap: var(--lrp-space-1); justify-content: flex-end; margin-top: var(--lrp-space-3); }
+.lrp-ui-modal [role="alert"] { color: var(--text-error); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.lrp-management-error { padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb,var(--text-error) 7%,var(--background-primary)); margin-bottom: 12px; }
+.lrp-management-error[hidden] { display: none !important; }
+/* The native modal close button is the single, consistent dismissal affordance. */
+.lrp-ui-modal .dashboard-task-modal-close { display: none; }
+/* Preserve the deliberately compact management rows and taller name fields. */
+.lrp-ui-modal.lrp-manage-projects-modal .lrp-management-group-actions button { min-height: 30px; }
+.lrp-ui-modal.lrp-manage-projects-modal .lrp-management-project-row select { min-height: 34px; }
+.lrp-ui-modal.lrp-manage-projects-modal .lrp-management-form input[type="text"] { min-height: 40px; }
+@media(prefers-reduced-motion:reduce) { .lrp-ui-modal * { transition: none !important; } }
+
+/* Calendar preview: readonly sibling checklist and owner progress. */
+.lrp-preview-context-list { list-style: none; padding: 0; margin: 8px 0 12px; display: flex; flex-direction: column; gap: 4px; }
+.lrp-preview-context-row { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
+.lrp-preview-context-row.is-current { background: color-mix(in srgb,#9874b5 23%,var(--background-primary)); }
+.lrp-preview-context-state { flex: 0 0 18px; text-align: center; font-size: 18px; line-height: 21px; color: var(--text-muted); }
+.lrp-preview-context-state.is-complete { color: #287348; font-weight: 700; }
+.lrp-preview-context-title { min-width: 0; overflow-wrap: anywhere; }
+.lrp-preview-parent-progress { margin: 12px 0 16px; }
+
+.lrp-task-preview .lrp-preview-relation { font-size: 15px; font-weight: 600; }
+.lrp-preview-parent-progress .lrp-inline-progress { display: grid; grid-template-columns: minmax(0,1fr) 42px; width: 100%; gap: 12px; }
+.lrp-preview-parent-progress .lrp-inline-progress progress { width: 100% !important; min-width: 0; }
+.lrp-preview-description-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 8px; }
+.lrp-task-preview .lrp-preview-description-heading h4 { margin: 0; }
+.lrp-preview-description-heading button { min-height: 30px; padding: 4px 10px; }
+.lrp-preview-description-body { padding: 12px; border-radius: 9px; background: color-mix(in srgb,var(--lrp-project-color,#9874b5) 6%,var(--background-primary)); font-size: 15px; font-weight: 600; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lrp-preview-description-form textarea { width: 100%; min-height: 130px; }
+
+.lrp-preview-description-form[hidden],.lrp-preview-description-body[hidden],.lrp-preview-description-heading button[hidden] { display: none !important; }
+.lrp-preview-description-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+.planner-board-checklist-label[role="button"] { cursor: pointer; border-radius: 4px; }
+.planner-board-checklist-label[role="button"]:hover { color: var(--interactive-accent); }
+.planner-board-checklist-label[role="button"]:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+
+/* Keep navigation in one row; project text yields space before the icons. */
+.lrp-header-host { container-name: lrp-planner-header; container-type: inline-size; }
+.planner-header { display: grid; grid-template-columns: minmax(0,1.15fr) auto minmax(max-content,.85fr); column-gap: 12px; row-gap: 0; }
+.planner-header > .lrp-header-context { grid-column: 1; grid-row: 1; display: flex; flex-wrap: nowrap; gap: 10px; min-width: 0; }
+.planner-header > .planner-view-switcher { grid-column: 2; grid-row: 1; display: flex; flex-wrap: nowrap; gap: 4px; padding: 4px; max-width: 100%; min-width: 0; box-sizing: border-box; overflow-x: auto; }
+.planner-header > .planner-header-actions { grid-column: 3; grid-row: 1; display: flex; flex-wrap: nowrap; gap: 8px; min-width: 0; }
+.planner-header .planner-view-btn { width: 40px; min-width: 40px; padding: 6px; flex: 0 0 40px; }
+.planner-header .lrp-header-context .planner-project-switcher { flex: 0 1 auto; width: max-content; max-width: 220px; min-width: 44px; }
+.planner-header .lrp-header-context .lrp-project-picker { width: auto; min-width: 0; max-width: 100%; }
+.planner-header .lrp-header-context .lrp-project-picker > summary { width: auto; min-width: 0; max-width: 220px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.planner-header .lrp-current-week { flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 8px; }
+@container lrp-planner-header (max-width: 760px) {
+ .planner-header { column-gap: 8px; }
+ .planner-header .planner-view-btn { width: 32px; min-width: 32px; flex-basis: 32px; padding: 4px; }
+ .planner-header > .planner-view-switcher { gap: 3px; }
+ .planner-header .lrp-header-context { gap: 6px; }
+ .planner-header .lrp-current-week { font-size: 12px; padding: 6px; }
+ .planner-header > .planner-header-actions { gap: 4px; }
+ .planner-header-actions > button { padding-left: 6px; padding-right: 6px; white-space: nowrap; }
+}
+@container lrp-planner-header (max-width: 500px) {
+ .planner-header > .planner-view-switcher { width: clamp(80px,38cqw,216px); }
+ .planner-header .lrp-header-context .lrp-project-picker > summary { padding-left: 6px; padding-right: 6px; }
+}
+.lrp-task-preview { overscroll-behavior: contain; }
+
+/* Permanent UI rule: task completion boxes center on the name, not its date line. */
+:is(.planner-board-card-header,.planner-subtask-row,.myday-week-card-top,.dashboard-task-modal-item,.lrp-management-project-row label,.lrp-project-finder-manage-row) { align-items: center; }
+:is(.planner-board-card-header,.planner-board-checklist-item,.planner-subtask-row,.myday-week-card-top,.dashboard-task-modal-item,.lrp-management-project-row label,.lrp-project-finder-manage-row) input[type="checkbox"] {
+ align-self: center; vertical-align: middle; margin: 0 !important; transform: none;
+}
+.planner-board-wrapper .lrp-subtask-card-date { grid-row: 2; }
+.planner-board-checklist-label,.planner-subtask-title { align-self: center; }
+.lrp-preview-context-state { display: inline-flex; align-items: center; justify-content: center; align-self: center; }
+.planner-grid-wrapper .planner-complete-cell,.planner-myday-wrapper .myday-check-cell { vertical-align: middle; }
+.planner-grid-wrapper .planner-title-inner { align-items: center; }
+
+/* A one-line-high cell centers the square on line one even when the name wraps. */
+.lrp-task-first-line-check { display: flex; align-items: center; justify-content: center; align-self: start; flex: 0 0 18px; width: 18px; height: 1lh; min-height: 18px; font: inherit; }
+.lrp-task-first-line-check > input[type="checkbox"] { margin: 0 !important; transform: none; align-self: center; }
+.planner-board-wrapper .planner-board-checklist-item { font-size: 14px; line-height: 1.65; align-items: start; row-gap: 6px; }
+.planner-board-wrapper .planner-board-checklist-item > .lrp-task-first-line-check { grid-column: 1; grid-row: 1; }
+.planner-board-wrapper .planner-board-checklist-label { font-size: inherit; line-height: inherit; align-self: start; }
+.planner-board-wrapper .planner-board-card-header { font-size: 16px; line-height: 1.5; align-items: start; }
+.planner-board-wrapper .planner-board-card-title { line-height: inherit; }
+.planner-detail-wrapper .planner-subtask-row { font-size: 14px; line-height: 1.65; align-items: start; }
+.planner-detail-wrapper .planner-subtask-title { font-size: inherit; line-height: inherit; align-self: start; }
+.planner-myday-wrapper .myday-week-card-top { font-size: 15px; line-height: 1.65; align-items: start; gap: 8px; }
+.planner-myday-wrapper .myday-week-card-title { font-size: inherit; line-height: inherit; min-width: 0; overflow-wrap: anywhere; }
+.planner-myday-wrapper .lrp-calendar-subtask .myday-week-card-top { font-size: 14px; }
+.planner-myday-wrapper .lrp-calendar-subtask.myday-week-card { padding-top: 9px; padding-bottom: 9px; }
+.planner-myday-wrapper .lrp-calendar-subtask.myday-month-task { font-size: 13px; line-height: 1.65; padding-top: 7px; padding-bottom: 7px; }
+.planner-myday-wrapper .lrp-calendar-subtask .myday-month-task-title { font-size: inherit; line-height: inherit; }
+.lrp-preview-context-row { align-items: start; font-size: 14px; line-height: 1.65; padding-top: 8px; padding-bottom: 8px; }
+.lrp-preview-context-title { line-height: inherit; }
+
+/* Fold dependency chains into a bounded-width canvas; show complete names. */
+.lrp-dependency-content,.lrp-dependency-project,.lrp-dependency-scroll { min-width: 0; max-width: 100%; }
+.lrp-dependency-scroll { max-height: min(74vh,900px); overflow: auto; padding-bottom: 12px; scrollbar-gutter: stable; }
+.lrp-dependency-project-header { flex-wrap: wrap; }
+.lrp-dependency-project-header h4 { flex: 1 1 240px; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.5; }
+.lrp-dependency-stage button.lrp-dependency-card { height: auto; gap: 10px; }
+.lrp-dependency-card strong { display: block; font-size: 16px; line-height: 1.5; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+
+/* Finder navigation starts at the project title, even for a very tall project. */
+:is(.lrp-all-project-section,.dashboard-project-card,.lrp-dependency-project) { scroll-margin-block-start: 12px; }
+
+/* Project review editing uses the available modal width, including narrow windows. */
+.lrp-ui-modal .lrp-project-review-form { width: 100%; min-width: 0; }
+.lrp-ui-modal .lrp-project-review-form > textarea {
+ display: block;
+ width: 100%;
+ max-width: 100%;
+ height: min(320px, 48vh);
+ min-height: min(200px, 32vh);
+ box-sizing: border-box;
+}
+
+/* Cost notes share the roomy, soft editing controls used by project reviews. */
+.lrp-cost-note-editor { width: min(720px, 100%); padding: 16px; }
+.lrp-cost-note-editor textarea {
+ display: block; width: 100%; max-width: 100%; box-sizing: border-box;
+ min-height: 180px; padding: 12px 14px; font-size: 15px; line-height: 1.65;
+ color: var(--text-normal); background: var(--background-primary);
+ border: 1px solid var(--lrp-control-border, var(--background-modifier-border));
+ border-radius: var(--lrp-control-radius, 9px); resize: vertical;
+}
+.lrp-cost-note-editor textarea:focus {
+ outline: none !important; border-color: var(--interactive-accent);
+ box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 25%, transparent) !important;
+}
+
+/* Project editing follows the same solid project color as the title's accent line. */
+button.lrp-project-edit-btn,
+button.lrp-project-edit-btn:hover,
+button.lrp-project-edit-btn:active,
+button.lrp-project-edit-btn:focus-visible {
+ background: var(--lrp-project-edit-color, var(--lrp-project-color, #9874b5)) !important;
+ border-color: var(--lrp-project-edit-color, var(--lrp-project-color, #9874b5)) !important;
+ color: #ffffff !important;
+ box-shadow: none !important;
+}
+.lrp-cost-note-editor .lrp-new-project-actions { margin-top: 12px; }
+
+/* Keep the shared edit action at the trailing edge of each project heading. */
+:is(.lrp-all-project-heading, .dashboard-project-header, .lrp-dependency-project-header) > button.lrp-project-edit-btn {
+ margin-left: auto;
+ margin-inline-start: auto;
+ flex: 0 0 auto;
+ float: none;
+}

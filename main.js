@@ -267,7 +267,7 @@ const LRP_ZH = {
   "Add priority": "新增优先级",
   "Support development": "支持原作者",
   "Documentation & Updates": "原项目文档",
-  "Visit the official website for documentation, guides, and updates": "查看原项目文档。此独立版本只通过本地部署更新。",
+  "Visit the official website for documentation, guides, and updates": "查看原项目文档。此个人版本只通过本地部署更新。",
   "Visit projectplanner.md": "查看原项目网站",
   "Buy me a coffee": "自愿赞助原作者",
   "If you find this plugin useful, consider supporting development!": "可自愿支持原作者，无需付费即可使用。",
@@ -359,9 +359,10 @@ class ProjectPlannerSettingTab extends obsidian.PluginSettingTab {
         headerEl.createEl("h2", { text: lrpText("long-range-planner Settings") });
         const versionEl = headerEl.createDiv({ cls: "planner-settings-version" });
         versionEl.createEl("span", {
-            text: `v${this.plugin.manifest.version} · 独立版`,
+            text: `v${this.plugin.manifest.version} · 个人版`,
             cls: "planner-version-badge"
         });
+        renderLrpAppleRemindersSettings(containerEl,this.plugin);
         // Add link to releases/changelog
         const changelogLink = versionEl.createEl("a", {
             text: lrpText("Changelog"),
@@ -1085,12 +1086,250 @@ class ProjectPlannerSettingTab extends obsidian.PluginSettingTab {
     }
 }
 
+const LRP_PROJECT_OVERVIEW_FIELDS = [
+    ['introduction', '简介与目标', '这个项目是什么，为什么要做，希望达成什么？'],
+    ['approach', '实现思路', '准备如何实现，需要哪些资源？'],
+    ['plan', '阶段规划', '分几个阶段推进，有哪些关键节点？'],
+];
+function getLrpProjectBriefText(project, key) {
+    if (key === 'introduction') return [project.overview?.introduction,project.overview?.goals].filter(Boolean).join('\n\n');
+    return project.overview?.[key] || '';
+}
+function formatLrpProjectDuration(duration) {
+    return [['years','年'],['months','个月'],['days','天']].filter(([key]) => Number(duration?.[key]) > 0).map(([key,unit]) => `${duration[key]} ${unit}`).join(' ') || '未设置';
+}
+async function saveLrpProjectOverview(plugin, projectId, draft) {
+    const project = (plugin.settings.projects || []).find(item => item.id === projectId);
+    if (!project) throw new Error('项目已不存在，请刷新后重试。');
+    const name = String(draft.name || '').trim();
+    if (!name) throw new Error('请输入项目名称。');
+    if (plugin.settings.projects.some(item => item.id !== projectId && item.name === name)) throw new Error('已有同名项目，请换一个名称。');
+    let duration = project.estimatedDuration;
+    if (draft.estimatedDuration !== undefined) {
+        duration = {};
+        for (const key of ['years','months','days']) {
+            const value = Number(draft.estimatedDuration?.[key] ?? 0);
+            if (!Number.isInteger(value) || value < 0 || value > 9999) throw new Error('预计时间请填写0至9999之间的整数。');
+            duration[key] = value;
+        }
+    }
+    const scoring = draft.scoring !== undefined ? validateLrpScoringSettings(draft.scoring) : project.scoring;
+    const before = {name:project.name, overview:project.overview, estimatedDuration:project.estimatedDuration, scoring:project.scoring, lastUpdatedDate:project.lastUpdatedDate};
+    const had = Object.fromEntries(Object.keys(before).map(key => [key,Object.prototype.hasOwnProperty.call(project,key)]));
+    project.name = name;
+    if (draft.scoring !== undefined) project.scoring = scoring;
+    if (draft.estimatedDuration !== undefined) project.estimatedDuration = duration;
+    project.overview = {...project.overview};
+    for (const [key] of LRP_PROJECT_OVERVIEW_FIELDS) project.overview[key] = String(draft[key] || '').trim();
+    delete project.overview.goals;
+    project.lastUpdatedDate = new Date().toISOString();
+    try { await plugin.saveSettings(); }
+    catch (error) {
+        for (const key of Object.keys(before)) { if (had[key]) project[key] = before[key]; else delete project[key]; }
+        throw error;
+    }
+    return project;
+}
+class LrpProjectOverviewModal extends obsidian.Modal {
+    constructor(plugin, projectId, onSaved) {
+        super(plugin.app);
+        this.plugin = plugin; this.projectId = projectId; this.onSaved = onSaved;
+    }
+    onOpen() {
+        const project = (this.plugin.settings.projects || []).find(item => item.id === this.projectId);
+        if (!project) { this.close(); return; }
+        this.modalEl?.classList.add('lrp-project-overview-modal');
+        const content = this.contentEl; content.empty();
+        content.style.setProperty('--lrp-project-color',project.calendarColor || '#9874b5');
+        content.createEl('h2',{text:'编辑项目'});
+        const form = content.createEl('form',{cls:'lrp-project-overview-form'});
+        const label = form.createEl('label',{text:'项目名称'});
+        const name = label.createEl('input',{attr:{type:'text',required:'true','aria-label':'项目名称'}}); name.value = project.name;
+        const grid = form.createDiv('lrp-project-overview-form-fields');
+        const inputs = {};
+        for (const [key,title,hint] of LRP_PROJECT_OVERVIEW_FIELDS) {
+            const card = grid.createEl('label',{cls:'lrp-project-overview-field'});
+            card.createEl('strong',{text:title});
+            const input = card.createEl('textarea',{attr:{rows:'5',placeholder:hint,'aria-label':title}});
+            input.value = getLrpProjectBriefText(project,key); inputs[key] = input;
+        }
+        const durationCard = form.createDiv('lrp-project-duration-editor');
+        durationCard.createEl('strong',{text:'预计所需时间'});
+        const durationFields = durationCard.createDiv('lrp-project-duration-fields');
+        const durationInputs = {};
+        for (const [key,title] of [['years','年'],['months','个月'],['days','天']]) {
+            const label = durationFields.createEl('label');
+            const input = label.createEl('input',{attr:{type:'number',min:'0',max:'9999',step:'1','aria-label':`预计时间（${title}）`}});
+            input.value = String(project.estimatedDuration?.[key] || 0);
+            label.createSpan({text:title});durationInputs[key] = input;
+        }
+        durationCard.createEl('p',{text:'可组合填写，如1年2个月12天；全部为0表示未设置，不修改任务日期。',cls:'lrp-project-overview-placeholder'});
+        const readScoringSettings = addLrpScoringSettingsEditor(form,project);
+        const errorText = form.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});
+        const actions = form.createDiv('lrp-new-project-actions');
+        const cancel = actions.createEl('button',{text:'取消',attr:{type:'button'}});
+        const save = actions.createEl('button',{text:'保存项目',cls:'mod-cta',attr:{type:'submit'}});
+        cancel.onclick = () => this.close();
+        form.onsubmit = async event => {
+            event.preventDefault(); if (save.disabled) return;
+            save.disabled = true; cancel.disabled = true; errorText.textContent = '';
+            const draft = {name:name.value,scoring:readScoringSettings(),estimatedDuration:Object.fromEntries(Object.entries(durationInputs).map(([key,input]) => [key,input.value]))};
+            for (const [key] of LRP_PROJECT_OVERVIEW_FIELDS) draft[key] = inputs[key].value;
+            try { await saveLrpProjectOverview(this.plugin,this.projectId,draft); }
+            catch (error) { errorText.textContent = error.message || '保存失败，请重试。'; save.disabled = false; cancel.disabled = false; return; }
+            this.close();
+            try { if (this.onSaved) await this.onSaved(); }
+            catch (error) { console.error(error); new obsidian.Notice('项目已保存，刷新面板后即可查看。'); }
+        };
+        name.focus();
+    }
+    onClose() { this.contentEl.empty(); }
+}
+function addLrpProjectEditButton(parent, plugin, project, onSaved) {
+    const button = parent.createEl('button',{text:'编辑项目',cls:'lrp-project-edit-btn',attr:{type:'button',title:'编辑项目名称、简介、目标与规划'}});
+    const color=project.calendarColor || '#9874b5';
+    button.style.setProperty('--lrp-project-edit-color',color);
+    button.onclick = event => {event.preventDefault();event.stopPropagation();new LrpProjectOverviewModal(plugin,project.id,onSaved).open();};
+    button.ondblclick = event => event.stopPropagation();
+    return button;
+}
+function renderLrpProjectOverview(parent, plugin, project, onSaved) {
+    const panel = parent.createEl('details',{cls:'lrp-project-overview'});
+    panel.style.setProperty('--lrp-project-color',project.calendarColor || '#9874b5');
+    const duration = formatLrpProjectDuration(project.estimatedDuration);
+    const filled = LRP_PROJECT_OVERVIEW_FIELDS.some(([key]) => getLrpProjectBriefText(project,key)) || duration !== '未设置';
+    panel.open = false;
+    const summary = panel.createEl('summary');
+    summary.createSpan({text:filled?'项目概括':'项目概括 · 添加简介与目标、规划'});
+    const tagBox = summary.createSpan({cls:'lrp-project-summary-tags'});
+    const projectTags = getLrpProjectTags(plugin.settings, project.id);
+    if (projectTags.length) {
+        for (const tag of projectTags) {
+            const chip = tagBox.createEl('button',{text:tag.name,cls:'lrp-project-summary-tag',attr:{type:'button',title:'编辑项目标签'}});
+            chip.style.setProperty('--lrp-tag-color',tag.color);
+            chip.style.backgroundColor=tag.color;
+            chip.style.backgroundImage='none';
+            chip.style.color='#000';
+            chip.style.border='none';
+            chip.style.boxShadow='none';
+            chip.onclick = (event) => {event.preventDefault();event.stopPropagation();new LrpProjectTagModal(plugin,project,tag,onSaved).open();};
+        }
+    }
+    else {
+        const addTag = tagBox.createEl('button',{text:'新建标签',cls:'lrp-project-summary-tag-add',attr:{type:'button',title:'为本项目新建标签'}});
+        addTag.onclick = (event) => {event.preventDefault();event.stopPropagation();new LrpProjectTagModal(plugin,project,null,onSaved).open();};
+    }
+    const durationBox = summary.createSpan({cls:'lrp-project-overview-duration'});
+    durationBox.createSpan({text:'预计所需时间',cls:'lrp-project-overview-duration-label'});
+    durationBox.createSpan({text:duration,cls:'lrp-project-overview-duration-value'});
+    const grid = panel.createDiv('lrp-project-overview-content');
+    // Left column stacks 简介与目标 and 实现思路; 阶段规划 fills the right column beside both.
+    for (const [key,title,hint] of [LRP_PROJECT_OVERVIEW_FIELDS[0],LRP_PROJECT_OVERVIEW_FIELDS[1]]) {
+        const card = grid.createDiv('lrp-project-overview-section lrp-project-overview-brief');
+        card.createEl('h4',{text:title});
+        card.createEl('p',{text:getLrpProjectBriefText(project,key) || hint,cls:getLrpProjectBriefText(project,key)?'':'lrp-project-overview-placeholder'});
+    }
+    const stageCard = grid.createDiv('lrp-project-overview-section lrp-project-overview-stage');
+    stageCard.createEl('h4',{text:LRP_PROJECT_OVERVIEW_FIELDS[2][1]});
+    stageCard.createEl('p',{text:getLrpProjectBriefText(project,'plan') || LRP_PROJECT_OVERVIEW_FIELDS[2][2],cls:getLrpProjectBriefText(project,'plan')?'':'lrp-project-overview-placeholder'});
+    const scoringForm=grid.createEl('form',{cls:'lrp-overview-scoring-form'});
+    const readScoring=addLrpScoringSettingsEditor(scoringForm,project);
+    const error=scoringForm.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});
+    const save=scoringForm.createEl('button',{text:'保存评分设置',cls:'lrp-overview-save-scoring',attr:{type:'submit'}});
+    addLrpProjectEditButton(scoringForm,plugin,project,onSaved);
+    scoringForm.onsubmit=async event=>{
+        event.preventDefault();event.stopPropagation();if(save.disabled)return;save.disabled=true;
+        try{
+            const draft={name:project.name,scoring:readScoring()};
+            for(const [key] of LRP_PROJECT_OVERVIEW_FIELDS)draft[key]=getLrpProjectBriefText(project,key);
+            await saveLrpProjectOverview(plugin,project.id,draft);if(onSaved)await onSaved();
+        }catch(problem){error.textContent=problem.message || '保存失败，请重试。';}
+        finally{save.disabled=false;}
+    };
+    return panel;
+}
+
+async function createLrpProject(plugin, name, groupId=null, scope=null) {
+    const title = String(name || "").trim();
+    if (!title) throw new Error("请输入项目名称。");
+    const settings = plugin.settings;
+    if ((settings.projects || []).some(project => project.name === title)) throw new Error("已有同名项目，请换一个名称。");
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const buckets = [];
+    for (let i = 0; i < 3; i++) buckets.push(makePersonalBucket(buckets, Math.random, crypto.randomUUID()));
+    const usedColors = new Set((settings.projects || []).map(project => project.calendarColor));
+    const project = {id, name:title, storageKey:`project-${id}`, createdDate:now, lastUpdatedDate:now,
+        calendarColor:LRP_PROJECT_COLORS.find(color => !usedColors.has(color)) || LRP_PROJECT_COLORS[0], buckets, groupId};
+    const previousActive = settings.activeProjectId;
+    const previousAll = settings.showAllProjects;
+    settings.projects = [...(settings.projects || []), project];
+    settings.activeProjectId = scope ? scope.activeProjectId : id;
+    settings.showAllProjects = scope ? scope.showAllProjects : false;
+    try { await plugin.saveSettings(); }
+    catch (error) {
+        settings.projects = settings.projects.filter(item => item.id !== id);
+        settings.activeProjectId = previousActive;
+        settings.showAllProjects = previousAll;
+        throw error;
+    }
+    return project;
+}
+
+class LrpNewProjectModal extends obsidian.Modal {
+    constructor(plugin, onCreated) {
+        super(plugin.app);
+        this.plugin = plugin;
+        this.onCreated = onCreated;
+    }
+    onOpen() {
+        const content = this.contentEl;
+        content.empty();
+        content.createEl("h2", {text:"新建项目"});
+        const form = content.createEl("form", {cls:"lrp-new-project-form"});
+        const label = form.createEl("label", {text:"项目名称"});
+        const input = label.createEl("input", {attr:{type:"text",placeholder:"输入项目名称",required:"true","aria-label":"项目名称"}});
+        const errorText = form.createDiv({cls:"lrp-new-project-error",attr:{role:"alert"}});
+        const actions = form.createDiv({cls:"lrp-new-project-actions"});
+        const cancel = actions.createEl("button", {text:"取消",attr:{type:"button"}});
+        const submit = actions.createEl("button", {text:"创建项目",cls:"mod-cta",attr:{type:"submit"}});
+        cancel.onclick = () => this.close();
+        form.onsubmit = async event => {
+            event.preventDefault();
+            if (submit.disabled) return;
+            submit.disabled = true;
+            cancel.disabled = true;
+            errorText.textContent = "";
+            try { await createLrpProject(this.plugin, input.value); }
+            catch (error) {
+                errorText.textContent = error.message || "创建失败，请重试。";
+                submit.disabled = false;
+                cancel.disabled = false;
+                return;
+            }
+            this.close();
+            try {
+                await this.plugin.taskStore.load();
+                if (this.plugin.settings.enableMarkdownSync) await this.plugin.initializeTaskSync();
+                if (this.onCreated) await this.onCreated();
+            } catch (error) {
+                console.error(error);
+                new obsidian.Notice("项目已创建，刷新面板后即可查看。");
+            }
+        };
+        input.focus();
+    }
+    onClose() { this.contentEl.empty(); }
+}
+
 function renderPlannerHeader(parent, plugin, options) {
     if (plugin.lrpEmbeddedScope) return parent.createDiv("lrp-embedded-header");
+    parent.classList.add("lrp-header-host");
     const header = parent.createDiv("planner-header");
+    header.setAttribute("aria-label","项目与视图导航");
     const context=header.createDiv("lrp-header-context");
     const projectContainer = context.createDiv("planner-project-switcher");
-    const weekLabel=context.createSpan({text:`今天 · ${formatLrpWeek(new Date())}`,cls:"lrp-current-week"});
+    const weekLabel=context.createSpan({text:formatLrpWeek(new Date()),cls:"lrp-current-week"});
     registerLrpWeekLabel(plugin,weekLabel);
     const settings=plugin.settings;
     const projects=settings.projects || [];
@@ -1099,23 +1338,15 @@ function renderPlannerHeader(parent, plugin, options) {
     const summary=picker.createEl("summary",{text:settings.showAllProjects ? "全部项目" : selected?.name || "选择项目"});
     summary.style.setProperty("--lrp-project-color",settings.showAllProjects ? "#999999" : selected?.calendarColor || "#999999");
     const menu=picker.createDiv("lrp-project-menu");
-    const addOption=(name,id,color)=>{
-        const button=menu.createEl("button",{text:name,attr:{type:"button"}});
-        if(color)button.style.setProperty("--lrp-project-color",color);
-        button.onclick=async()=>{
-            picker.open=false;
-            summary.textContent=name;
-            if(color)summary.style.setProperty("--lrp-project-color",color);
-            else summary.style.removeProperty("--lrp-project-color");
-            settings.showAllProjects=id===null;
-            if(id!==null)settings.activeProjectId=id;
-            await plugin.saveSettings();
-            await plugin.taskStore.load();
-            if(typeof options.onProjectChange==="function")await options.onProjectChange();
-        };
-    };
-    addOption("全部项目",null,"#999999");
-    for(const project of projects)addOption(project.name,project.id,project.calendarColor);
+    const projectMenu=renderLrpGroupedProjectPicker(menu,plugin,async(name,id,color)=>{
+        picker.open=false;summary.textContent=name;
+        summary.style.setProperty('--lrp-project-color',color || '#999999');
+        settings.showAllProjects=id===null;
+        if(id!==null)settings.activeProjectId=id;
+        await plugin.saveSettings();await plugin.taskStore.load();
+        if(typeof options.onProjectChange==='function')await options.onProjectChange();
+    });
+    picker.ontoggle=()=>{if(picker.open)projectMenu.showCurrentGroup();};
     // View switcher
     const viewSwitcher = header.createDiv("planner-view-switcher");
     const dashboardViewBtn = viewSwitcher.createEl("button", {
@@ -1154,24 +1385,15 @@ function renderPlannerHeader(parent, plugin, options) {
     });
     obsidian.setIcon(graphViewBtn, "git-fork");
     graphViewBtn.onclick = async () => await plugin.openDependencyGraph();
+    for(const button of viewSwitcher.querySelectorAll("button")){button.setAttribute("aria-pressed",String(button.classList.contains("planner-view-btn-active")));if(button.title)button.setAttribute("aria-label",button.title);}
     // Header actions (Add task, extra, Project Hub, Settings)
     const headerActions = header.createDiv("planner-header-actions");
-    if (!options.hideAddTask) {
-        const addBtn = headerActions.createEl("button", {
-            cls: "planner-add-btn",
-            text: lrpText("Add Task"),
-        });
-        addBtn.onclick = async () => {
-            if (options.onAddTask) {
-                await options.onAddTask();
-            }
-            else {
-                await plugin.taskStore.addTask("New Task");
-            }
-        };
-    }
     if (options.buildExtraActions) {
         options.buildExtraActions(headerActions);
+    }
+    if (selected && !settings.showAllProjects) {
+        summary.title = `${selected.name} · 右键编辑项目名称与概括`;
+        summary.oncontextmenu = event => {event.preventDefault();new LrpProjectOverviewModal(plugin,selected.id,options.onProjectChange).open();};
     }
     const settingsBtn = headerActions.createEl("button", {
         cls: "planner-settings-btn",
@@ -1191,6 +1413,7 @@ function renderPlannerHeader(parent, plugin, options) {
         app.setting?.open();
         app.setting?.openTabById(plugin.manifest.id);
     };
+    if (options.active === "board" && selected && !settings.showAllProjects) renderLrpProjectOverview(parent,plugin,selected,options.onProjectChange);
     return { headerEl: header, actionsEl: headerActions };
 }
 
@@ -2056,40 +2279,8 @@ class GridView extends obsidian.ItemView {
             duration: () => {
                 row.createEl("td",{cls:"planner-duration-cell",text:getLrpTaskSchedule(task).duration});
             },
-            costEstimate: () => {
-                const settings = this.plugin.settings;
-                const project = settings.projects?.find(p => p.id === settings.activeProjectId);
-                const currency = project?.currencySymbol || "$";
-                const isRolledUp = hasChildren && this.plugin.settings.enableParentRollUp;
-                const est = getTaskEstimatedCost(task, project);
-                if (!task.costType && !isRolledUp) {
-                    row.createEl("td", { cls: "planner-effort-cell", text: lrpText("-") });
-                    return;
-                }
-                const cell = row.createEl("td", {
-                    cls: `planner-effort-cell planner-cost-cell${isRolledUp ? " planner-rolled-up" : ""}`,
-                    text: est > 0 ? formatCurrency(est, currency) : "-"
-                });
-                if (isRolledUp)
-                    cell.setAttribute("title", "Rolled up from subtasks");
-            },
-            costActual: () => {
-                const settings = this.plugin.settings;
-                const project = settings.projects?.find(p => p.id === settings.activeProjectId);
-                const currency = project?.currencySymbol || "$";
-                const isRolledUp = hasChildren && this.plugin.settings.enableParentRollUp;
-                const act = getTaskActualCost(task, project);
-                if (!task.costType && !isRolledUp) {
-                    row.createEl("td", { cls: "planner-effort-cell", text: lrpText("-") });
-                    return;
-                }
-                const cell = row.createEl("td", {
-                    cls: `planner-effort-cell planner-cost-cell${isRolledUp ? " planner-rolled-up" : ""}`,
-                    text: act > 0 ? formatCurrency(act, currency) : "-"
-                });
-                if (isRolledUp)
-                    cell.setAttribute("title", "Rolled up from subtasks");
-            },
+            costEstimate: () => renderLrpEditableCostCell(row,this.plugin,task,'costEstimate',this.plugin.settings.projects?.find(p=>p.id===this.plugin.settings.activeProjectId),hasChildren && this.plugin.settings.enableParentRollUp),
+            costActual: () => renderLrpEditableCostCell(row,this.plugin,task,'costActual',this.plugin.settings.projects?.find(p=>p.id===this.plugin.settings.activeProjectId),hasChildren && this.plugin.settings.enableParentRollUp),
         };
         // Render cells in the dynamic column order (respects drag-and-drop reordering)
         const columns = this.getColumnDefinitions();
@@ -3326,7 +3517,10 @@ class GridView extends obsidian.ItemView {
     renderTaskTags(cell, task) {
         const settings = this.plugin.settings;
         const availableTags = settings.availableTags || [];
-        const taskTags = task.tags || [];
+        const projectId = this.plugin.settings?.activeProjectId;
+        const inheritedIds = new Set(getLrpProjectTags(settings,projectId).map(tag=>tag.id));
+        const ownTags = task.tags || [];
+        const taskTags = [...new Set([...inheritedIds,...ownTags])];
         // Make cell clickable to open tag selector
         cell.classList.add("planner-tags-cell-interactive");
         cell.style.cursor = "pointer";
@@ -3341,17 +3535,22 @@ class GridView extends obsidian.ItemView {
                         text: tag.name
                     });
                     badge.style.backgroundColor = tag.color;
-                    // Add remove button
-                    const removeBtn = badge.createEl("span", {
-                        cls: "planner-tag-remove-grid",
-                        text: lrpText("×")
-                    });
-                    removeBtn.onclick = async (e) => {
-                        e.stopPropagation();
-                        const newTags = taskTags.filter(id => id !== tagId);
-                        await this.taskStore.updateTask(task.id, { tags: newTags });
-                        // Don't call render() - TaskStore subscription handles it
-                    };
+                    if (inheritedIds.has(tagId)) {
+                        badge.classList.add('planner-tag-inherited');
+                        badge.title = '来自项目标签';
+                    }
+                    else {
+                        const removeBtn = badge.createEl("span", {
+                            cls: "planner-tag-remove-grid",
+                            text: lrpText("×")
+                        });
+                        removeBtn.onclick = async (e) => {
+                            e.stopPropagation();
+                            const newTags = ownTags.filter(id => id !== tagId);
+                            await this.taskStore.updateTask(task.id, { tags: newTags });
+                            // Don't call render() - TaskStore subscription handles it
+                        };
+                    }
                 }
             });
         }
@@ -3384,7 +3583,7 @@ class GridView extends obsidian.ItemView {
                         iconEl.style.height = "12px";
                     }
                     item.onClick(async () => {
-                        const newTags = [...taskTags, tag.id];
+                        const newTags = [...ownTags, tag.id];
                         await this.taskStore.updateTask(task.id, { tags: newTags });
                         // Don't call render() - TaskStore subscription handles it
                     });
@@ -3444,6 +3643,104 @@ function createPersonalTag(settings,name,color,id=crypto.randomUUID()) {
     return tag;
 }
 
+// Project-level tags are inherited by every task in the project at render time (no task data is rewritten).
+function getLrpProjectTags(settings,projectId) {
+    const project=(settings.projects || []).find(item=>item.id===projectId);
+    const ids=project?.tags || [];
+    if(!ids.length)return [];
+    const available=settings.availableTags || [];
+    return ids.map(id=>available.find(tag=>tag.id===id)).filter(Boolean);
+}
+function getLrpTaskTagIds(settings,task,projectId) {
+    const inherited=getLrpProjectTags(settings,projectId).map(tag=>tag.id);
+    return [...new Set([...inherited,...(task?.tags || [])])];
+}
+class LrpProjectTagModal extends obsidian.Modal {
+    constructor(plugin,project,tag,onSaved) {
+        super(plugin.app);
+        this.plugin=plugin;this.project=project;this.onSaved=onSaved;
+    }
+    onOpen() {
+        this.renderBody();
+        if(this.modalEl)this.modalEl.style.width='min(500px,92vw)';
+    }
+    async notifySaved() {
+        try{if(this.onSaved)await this.onSaved();}
+        catch(error){console.error(error);}
+    }
+    renderBody() {
+        const content=this.contentEl;content.empty();
+        content.classList?.add?.('lrp-project-tag-modal');
+        content.createEl('h2',{text:'项目标签'});
+        const settings=this.plugin.settings;
+        const availableTags=settings.availableTags || [];
+        const projectTags=getLrpProjectTags(settings,this.project.id);
+        const tagContainer=content.createDiv('planner-tag-container');
+        const assignedTagsDiv=tagContainer.createDiv('planner-assigned-tags');
+        if(!projectTags.length){
+            assignedTagsDiv.createEl('span',{text:lrpText('No tags assigned'),cls:'planner-no-tags'});
+        }
+        else{
+            for(const tag of projectTags){
+                const badge=assignedTagsDiv.createDiv({cls:'planner-tag-badge',text:tag.name});
+                badge.style.backgroundColor=tag.color;
+                const removeBtn=badge.createEl('span',{cls:'planner-tag-remove',text:lrpText('×')});
+                removeBtn.onclick=async()=>{
+                    const previousTags=[...(this.project.tags || [])];
+                    this.project.tags=previousTags.filter(id=>id!==tag.id);
+                    try{await this.plugin.saveSettings();this.renderBody();await this.notifySaved();}
+                    catch(error){this.project.tags=previousTags;new obsidian.Notice('移除标签失败，请重试');console.error(error);}
+                };
+            }
+        }
+        const addTagDiv=tagContainer.createDiv('planner-add-tag');
+        const select=addTagDiv.createEl('select',{cls:'planner-tag-select'});
+        select.createEl('option',{text:lrpText('Add tag...'),value:''});
+        for(const tag of availableTags){
+            if(!projectTags.some(item=>item.id===tag.id))select.createEl('option',{text:tag.name,value:tag.id});
+        }
+        select.onchange=async()=>{
+            if(!select.value)return;
+            const previousTags=[...(this.project.tags || [])];
+            this.project.tags=[...new Set([...previousTags,select.value])];
+            try{await this.plugin.saveSettings();this.renderBody();await this.notifySaved();}
+            catch(error){this.project.tags=previousTags;new obsidian.Notice('添加标签失败，请重试');console.error(error);}
+        };
+        const form=tagContainer.createDiv('lrp-inline-tag-create');
+        const nameInput=form.createEl('input',{attr:{type:'text',placeholder:'新标签名称','aria-label':'新标签名称'}});
+        const colorInput=form.createEl('input',{attr:{type:'color','aria-label':'标签颜色'}});
+        const palette=LRP_BUCKET_PALETTE || ['#d9c4e8'];
+        colorInput.value=palette[availableTags.length % palette.length];
+        const createButton=form.createEl('button',{text:'创建并添加'});
+        let pending=false;
+        const create=async()=>{
+            if(pending)return;
+            const clean=nameInput.value.trim();
+            if(!clean){nameInput.focus?.();return;}
+            pending=true;createButton.disabled=true;
+            const previousAvailable=(settings.availableTags || []).map(tag=>({...tag}));
+            const previousProject=[...(this.project.tags || [])];
+            try{
+                const tag=createPersonalTag(settings,clean,colorInput.value);
+                this.project.tags=[...new Set([...(this.project.tags || []),tag.id])];
+                await this.plugin.saveSettings();
+                this.renderBody();await this.notifySaved();
+            }
+            catch(error){
+                settings.availableTags=previousAvailable;
+                this.project.tags=previousProject;
+                new obsidian.Notice('创建标签失败，请重试');
+                console.error(error);
+            }
+            finally{pending=false;createButton.disabled=false;}
+        };
+        createButton.onclick=create;
+        nameInput.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();void create();}};
+        const actions=content.createDiv('lrp-new-project-actions');
+        actions.createEl('button',{text:'完成',cls:'mod-cta',attr:{type:'button'}}).onclick=()=>this.close();
+    }
+    onClose(){this.contentEl.empty();}
+}
 function clampBoardStart(index, count, visible) { return Math.max(0, Math.min(index, Math.max(0, count - visible))); }
 
 const VIEW_TYPE_BOARD = "lrp-program-board-view";
@@ -3486,12 +3783,15 @@ class BoardView extends obsidian.ItemView {
         return "layout-grid";
     }
     async onOpen() {
+        this.lrpClosed=false;
         await this.taskStore.ensureLoaded();
         this.unsubscribe = this.taskStore.subscribe(() => this.render());
         await this.initializeBuckets();
         this.render();
     }
     async onClose() {
+        this.lrpClosed=true;
+        this.renderVersion++;
         this.boardResizeObserver?.disconnect();
         this.containerEl.empty();
         if (this.unsubscribe) {
@@ -3526,7 +3826,7 @@ class BoardView extends obsidian.ItemView {
         const projects = settings.projects || [];
         const activeProject = projects.find(p => p.id === activeProjectId);
         // Load buckets from project settings (each project has its own bucket layout)
-        if (activeProject && activeProject.buckets && activeProject.buckets.length > 0) {
+        if (Array.isArray(activeProject?.buckets) && (activeProject.buckets.length > 0 || activeProject.skippedWeekNumbers?.length)) {
             this.buckets = [...activeProject.buckets];
         }
         else {
@@ -3552,6 +3852,7 @@ class BoardView extends obsidian.ItemView {
         }
     }
     async render() {
+        if(this.lrpClosed)return;
         // Guard: if a render is already in progress, queue one re-render
         // and return. This prevents overlapping async renders from
         // corrupting scroll state and orphaning DOM elements.
@@ -3575,8 +3876,23 @@ class BoardView extends obsidian.ItemView {
         }
     }
     async renderImpl() {
+        const projectId=this.plugin.settings.activeProjectId;
+        const allGeneration=this.lrpAllGeneration;
+        const all=Boolean(this.plugin.settings.showAllProjects);
+        await this.initializeBuckets();
+        if(this.lrpClosed || projectId!==this.plugin.settings.activeProjectId || all!==Boolean(this.plugin.settings.showAllProjects) || allGeneration!==this.lrpAllGeneration)return;
+        if(this.lrpBoardProjectId!==projectId){
+            this.lrpBoardProjectId=projectId;this.boardStartIndex=0;
+            this.savedBoardScrollLeft=null;this.savedColumnScrollTops.clear();
+        }
         const container = this.containerEl;
         const thisRender = ++this.renderVersion;
+        const previousWrapper=container.querySelector('.planner-board-wrapper');
+        const pageScroll=previousWrapper?.querySelector('.lrp-board-page')?.scrollTop || previousWrapper?.scrollTop || 0;
+        const oldPinned=previousWrapper?.querySelector('.lrp-unassigned-fixed');
+        const pinnedFingerprint=getLrpPinnedFingerprint(this);
+        this.lrpReusePinned=Boolean(oldPinned && this.lrpPinnedFingerprint===pinnedFingerprint);
+        const briefWasOpen=Boolean(previousWrapper?.querySelector('.lrp-project-overview')?.open);
         // Save scroll positions before clearing — only if we haven't already
         // captured them (a rapid re-render would read 0 from a freshly-built DOM).
         const existingBoard = container.querySelector('.planner-board-container');
@@ -3591,8 +3907,8 @@ class BoardView extends obsidian.ItemView {
             });
         }
         this.boardResizeObserver?.disconnect();
-        container.empty();
-        const wrapper = container.createDiv("planner-board-wrapper");
+        const stage=container.ownerDocument.createElement("div");
+        const wrapper = stage.createDiv("planner-board-wrapper");
         // Shared header
         renderPlannerHeader(wrapper, this.plugin, {
             active: "board",
@@ -3603,8 +3919,10 @@ class BoardView extends obsidian.ItemView {
                 this.render();
             }
         });
+        const page=wrapper.createDiv("lrp-board-page");
+        const brief=wrapper.querySelector(".lrp-project-overview");if(brief)page.appendChild(brief);
         // Filter toolbar
-        const toolbar = wrapper.createDiv("planner-board-toolbar");
+        const toolbar = page.createDiv("planner-board-toolbar");
         const filters = toolbar.createDiv("planner-board-filters");
         // Priority filter
         const priorityFilterGroup = filters.createDiv("planner-filter-group");
@@ -3666,7 +3984,14 @@ class BoardView extends obsidian.ItemView {
         next.onclick = () => { this.boardStartIndex += 1; this.updateBoardPage(); };
         this.boardNavigation = {previous, next, range};
         // Render board columns
-        await this.renderBoard(wrapper);
+        await this.renderBoard(page);
+        if(this.lrpClosed || projectId!==this.plugin.settings.activeProjectId || all!==Boolean(this.plugin.settings.showAllProjects) || allGeneration!==this.lrpAllGeneration)return;
+        if(this.lrpReusePinned){const placeholder=wrapper.querySelector(".lrp-unassigned-fixed");placeholder.replaceWith(oldPinned);}
+        this.lrpPinnedFingerprint=pinnedFingerprint;this.lrpReusePinned=false;
+        container.replaceChildren(wrapper);
+        if(briefWasOpen){const brief=wrapper.querySelector('.lrp-project-overview');if(brief)brief.open=true;}
+        page.scrollTop=pageScroll;
+        requestAnimationFrame(()=>{if(this.renderVersion===thisRender)page.scrollTop=pageScroll;});
         this.updateBoardPage();
         this.boardResizeObserver = new ResizeObserver(() => this.updateBoardPage());
         this.boardResizeObserver.observe(wrapper);
@@ -3737,7 +4062,12 @@ class BoardView extends obsidian.ItemView {
         // Apply user filters
         tasks = tasks.filter(t => this.matchesFilters(t));
         // Render "Unassigned" bucket first for tasks without bucketId
-        await this.renderUnassignedBucket(pinned, tasks);
+        if(!this.lrpReusePinned){
+            await this.renderUnassignedBucket(pinned, tasks.filter(t=>!isLrpAssessmentTask(t,allTasks)));
+            await renderLrpAssessmentColumn(pinned,this,allTasks.filter(t=>t.lrpAssessment && !t.parentId && this.matchesFilters(t)));
+            setupLrpPinnedSections(pinned,this);
+        }
+        tasks=tasks.filter(t=>!isLrpAssessmentTask(t,allTasks));
         // Render each bucket/column
         for (const bucket of this.buckets) {
             const column = boardContainer.createDiv("planner-board-column");
@@ -3761,6 +4091,7 @@ class BoardView extends obsidian.ItemView {
             const headerTitle = columnHeader.createDiv("planner-board-column-title");
             // Create editable bucket name (same pattern as grid view task titles)
             this.createEditableBucketName(headerTitle, bucket);
+            addLrpBucketScheduleHeader(columnHeader,this,bucket);
             // 3-dots menu button (hover-visible)
             const bucketMenuBtn = columnHeader.createEl("button", {
                 cls: "planner-bucket-menu",
@@ -3793,8 +4124,8 @@ class BoardView extends obsidian.ItemView {
             const addTaskBtn = columnContent.createDiv("planner-board-add-card");
             addTaskBtn.textContent = lrpText("+ Add task");
             addTaskBtn.onclick = async () => {
-                const newTask = await this.taskStore.addTask("New Task");
-                await this.taskStore.updateTask(newTask.id, { bucketId: bucket.id });
+                const defaults = getLrpBucketTaskDefaults(bucket);
+                await this.taskStore.addTask("New Task", { ...(defaults || {}), bucketId: bucket.id });
                 // No explicit render() — TaskStore.save() → emit() already re-renders via subscription
             };
             // Separate incomplete and completed tasks
@@ -3826,10 +4157,10 @@ class BoardView extends obsidian.ItemView {
         };
     }
     renderAddBucketColumn(boardContainer) {
-        const actions = this.containerEl.querySelector(".lrp-board-navigation");
+        const actions = boardContainer.closest(".planner-board-wrapper").querySelector(".lrp-board-navigation");
         const addButton = actions.createEl("button", {text: lrpText("+ 下一周"), attr: {title: lrpText("添加下一周分组")}});
         addButton.onclick = async () => {
-            const newBucket = makePersonalBucket(this.buckets);
+            const newBucket = makeLrpNextBucket(this.plugin.settings.projects.find(p=>p.id===this.plugin.settings.activeProjectId),this.buckets);
             this.buckets.push(newBucket);
             await this.saveBuckets();
             this.render();
@@ -3926,12 +4257,13 @@ class BoardView extends obsidian.ItemView {
             }
             await this.plugin.openTaskDetail(task,{edit:true});
         };
-        // TAGS AT THE TOP (MS Planner style)
-        if (task.tags && task.tags.length > 0) {
+        // TAGS AT THE TOP (MS Planner style), including tags inherited from the project
+        const boardTagSettings = this.plugin.settings;
+        const boardTagIds = getLrpTaskTagIds(boardTagSettings,task,boardTagSettings.activeProjectId);
+        if (boardTagIds.length > 0) {
             const tagsRow = card.createDiv("planner-board-card-tags-top");
-            const settings = this.plugin.settings;
-            const availableTags = settings.availableTags || [];
-            task.tags.forEach((tagId) => {
+            const availableTags = boardTagSettings.availableTags || [];
+            boardTagIds.forEach((tagId) => {
                 const tag = availableTags.find(t => t.id === tagId);
                 if (tag) {
                     const tagBadge = tagsRow.createDiv("planner-board-card-tag");
@@ -3943,7 +4275,8 @@ class BoardView extends obsidian.ItemView {
         // Card header with checkbox, title, and menu (aligned on same row)
         const cardHeader = card.createDiv("planner-board-card-header");
         // Checkbox for complete/incomplete toggle
-        const checkbox = cardHeader.createEl("input", {
+        const checkCell = cardHeader.createDiv("lrp-task-first-line-check");
+        const checkbox = checkCell.createEl("input", {
             type: "checkbox",
             cls: "planner-board-card-checkbox",
         });
@@ -3975,12 +4308,13 @@ class BoardView extends obsidian.ItemView {
         };
         renderLrpTaskStatus(card.createDiv('lrp-board-task-status'),this.plugin,task);
         // Card preview content (checklist or description)
-        const cardPreview = task.cardPreview || "none";
+        const cardPreview = task.cardPreview === "description" ? "description" : "checklist";
         if (cardPreview === "checklist" && task.subtasks && task.subtasks.length > 0) {
             const checklistContainer = card.createDiv("planner-board-card-checklist");
             task.subtasks.forEach((subtask) => {
                 const itemDiv = checklistContainer.createDiv("planner-board-checklist-item");
-                const checkbox = itemDiv.createEl("input", {
+                const checkCell = itemDiv.createDiv("lrp-task-first-line-check");
+                const checkbox = checkCell.createEl("input", {
                     type: "checkbox",
                     cls: "planner-board-checklist-checkbox"
                 });
@@ -3993,6 +4327,8 @@ class BoardView extends obsidian.ItemView {
                 };
                 const label = itemDiv.createSpan("planner-board-checklist-label");
                 label.textContent = subtask.title;
+                bindLrpBoardSubtaskPreview(label,this.plugin,task,subtask);
+                renderLrpBoardScore(itemDiv.createDiv('lrp-subtask-score-slot'),this.plugin,task,subtask.id);
                 if(subtask.dueDate || subtask.startDate)itemDiv.createSpan({text:`${subtask.dueDate || subtask.startDate} · ${lrpText(subtask.priority || "Medium")}`,cls:"lrp-subtask-card-date"});
                 if (subtask.completed) {
                     label.classList.add("planner-board-checklist-completed");
@@ -4057,6 +4393,7 @@ class BoardView extends obsidian.ItemView {
                 subtasksInfo.classList.add("planner-board-card-subtasks-complete");
             }
         }
+        renderLrpBoardScore(footer.createDiv('lrp-task-score-slot'),this.plugin,task);
         // Dependencies indicator
         if (task.dependencies && task.dependencies.length > 0) {
             const depsIcon = footer.createDiv("planner-board-card-icon");
@@ -4254,7 +4591,7 @@ class BoardView extends obsidian.ItemView {
     }
     async renderUnassignedBucket(boardContainer, tasks) {
         // Filter tasks without bucketId (tasks are already filtered to exclude parents)
-        const unassignedTasks = tasks.filter((t) => !t.bucketId);
+        const unassignedTasks = tasks.filter((t) => !t.bucketId || !this.buckets.some(bucket=>bucket.id===t.bucketId));
         // Get custom name from settings
         const settings = this.plugin.settings;
         const activeProjectId = settings.activeProjectId;
@@ -4350,6 +4687,7 @@ class BoardView extends obsidian.ItemView {
     }
     startRenameBucket(titleElement, bucket) {
         const originalName = bucket.name;
+        titleElement.textContent=originalName;
         titleElement.contentEditable = "true";
         titleElement.focus();
         // Select all text
@@ -4490,6 +4828,7 @@ class BoardView extends obsidian.ItemView {
     }
     showBucketContextMenu(e, bucket, header) {
         const menu = new obsidian.Menu();
+        menu.addItem(item=>item.setTitle("设置对应周／跳周").setIcon("calendar").onClick(()=>new LrpBucketScheduleModal(this,bucket).open()));
         menu.addItem((item) => item
             .setTitle(lrpText("Rename bucket"))
             .setIcon("pencil")
@@ -4510,7 +4849,7 @@ class BoardView extends obsidian.ItemView {
             .setIcon("plus")
             .onClick(async () => {
             const bucketIndex = this.buckets.indexOf(bucket);
-            const newBucket = makePersonalBucket(this.buckets, Math.random, crypto.randomUUID(), [bucket, this.buckets[bucketIndex + 1]]);
+            const newBucket = makeLrpNextBucket(this.plugin.settings.projects.find(p=>p.id===this.plugin.settings.activeProjectId),this.buckets,[bucket,this.buckets[bucketIndex+1]]);
             this.buckets.splice(bucketIndex + 1, 0, newBucket);
             await this.saveBuckets();
             this.render();
@@ -4579,6 +4918,7 @@ class BoardView extends obsidian.ItemView {
                 }
             }
             activeProject.buckets = [...this.buckets];
+            if(activeProject.skippedWeekNumbers)activeProject.skippedWeekNumbers=activeProject.skippedWeekNumbers.filter(number=>number<=Math.max(0,...this.buckets.map(getLrpBucketNumber)));
             await this.plugin.saveSettings();
         }
     }
@@ -4656,6 +4996,15 @@ class BoardView extends obsidian.ItemView {
 }
 
 const VIEW_TYPE_TASK_DETAIL = "lrp-program-task-detail";
+// New subtasks inherit the owner task's dates once, so they can be edited independently afterwards.
+function createLrpSubtaskDraft(owner,id,title) {
+    const draft={id,title,completed:false};
+    const startDate=String(owner?.startDate || '').trim();
+    const dueDate=String(owner?.dueDate || '').trim();
+    if(startDate)draft.startDate=startDate;
+    if(dueDate)draft.dueDate=dueDate;
+    return draft;
+}
 class TaskDetailView extends obsidian.ItemView {
     constructor(leaf, plugin) {
         super(leaf);
@@ -4896,11 +5245,7 @@ class TaskDetailView extends obsidian.ItemView {
             const current = this.task.subtasks ?? [];
             const newSubtasks = [
                 ...current,
-                {
-                    id: this.createSubtaskId(),
-                    title: lrpText("New checklist item"),
-                    completed: false,
-                },
+                createLrpSubtaskDraft(this.task, this.createSubtaskId(), lrpText("New checklist item")),
             ];
             await this.update({ subtasks: newSubtasks });
         };
@@ -4908,7 +5253,7 @@ class TaskDetailView extends obsidian.ItemView {
         // CARD PREVIEW — what to show on board card
         //
         container.createEl("h3", { text: lrpText("Card Preview") });
-        const cardPreviewOptions = ["none", "checklist", "description"];
+        const cardPreviewOptions = ["checklist", "description"];
         const cardPreviewLabels = {
             none: lrpText("Hide checklist and description"),
             checklist: lrpText("Show checklist on card"),
@@ -4923,7 +5268,7 @@ class TaskDetailView extends obsidian.ItemView {
                 value: option,
                 text: cardPreviewLabels[option]
             });
-            if ((task.cardPreview || "none") === option) {
+            if ((task.cardPreview === "description" ? "description" : "checklist") === option) {
                 opt.selected = true;
             }
         });
@@ -5116,7 +5461,8 @@ class TaskDetailView extends obsidian.ItemView {
             };
         };
         // Checkbox
-        const checkbox = row.createEl("input", {
+        const checkCell = row.createDiv("lrp-task-first-line-check");
+        const checkbox = checkCell.createEl("input", {
             attr: { type: "checkbox" },
         });
         checkbox.checked = !!sub.completed;
@@ -5593,9 +5939,12 @@ class TaskDetailView extends obsidian.ItemView {
     renderTagSelector(container, task) {
         const settings = this.plugin.settings;
         const availableTags = settings.availableTags || [];
-        const taskTags = task.tags || [];
+        const owningProject = getLrpTaskTarget(this.plugin,task)?.project;
+        const projectId = owningProject?.id || settings.activeProjectId;
+        const inheritedIds = new Set(getLrpProjectTags(settings,projectId).map(tag=>tag.id));
+        const ownTags = task.tags || [];
+        const taskTags = [...new Set([...inheritedIds,...ownTags])];
         const tagContainer = container.createDiv("planner-tag-container");
-        // Display assigned tags as badges
         const assignedTagsDiv = tagContainer.createDiv("planner-assigned-tags");
         if (taskTags.length === 0) {
             assignedTagsDiv.createEl("span", {
@@ -5612,19 +5961,23 @@ class TaskDetailView extends obsidian.ItemView {
                         text: tag.name
                     });
                     badge.style.backgroundColor = tag.color;
-                    // Add remove button
-                    const removeBtn = badge.createEl("span", {
-                        cls: "planner-tag-remove",
-                        text: lrpText("×")
-                    });
-                    removeBtn.onclick = async () => {
-                        const newTags = taskTags.filter(id => id !== tagId);
-                        await this.update({ tags: newTags });
-                    };
+                    if (inheritedIds.has(tagId)) {
+                        badge.classList.add('planner-tag-inherited');
+                        badge.title = '来自项目标签';
+                    }
+                    else {
+                        const removeBtn = badge.createEl("span", {
+                            cls: "planner-tag-remove",
+                            text: lrpText("×")
+                        });
+                        removeBtn.onclick = async () => {
+                            const newTags = ownTags.filter(id => id !== tagId);
+                            await this.update({ tags: newTags });
+                        };
+                    }
                 }
             });
         }
-        // Add tag dropdown
         if (availableTags.length > 0) {
             const addTagDiv = tagContainer.createDiv("planner-add-tag");
             const select = addTagDiv.createEl("select", {
@@ -5638,16 +5991,16 @@ class TaskDetailView extends obsidian.ItemView {
             });
             select.onchange = async () => {
                 if (select.value) {
-                    const newTags = [...taskTags, select.value];
+                    const newTags = [...ownTags, select.value];
                     await this.update({ tags: newTags });
                 }
             };
         }
-        const form=tagContainer.createDiv("lrp-inline-tag-create");
-        const nameInput=form.createEl("input",{attr:{type:"text",placeholder:"新标签名称","aria-label":"新标签名称"}});
-        const colorInput=form.createEl("input",{attr:{type:"color","aria-label":"标签颜色"}});
+        const form=tagContainer.createDiv('lrp-inline-tag-create');
+        const nameInput=form.createEl('input',{attr:{type:'text',placeholder:'新标签名称','aria-label':'新标签名称'}});
+        const colorInput=form.createEl('input',{attr:{type:'color','aria-label':'标签颜色'}});
         colorInput.value=LRP_BUCKET_PALETTE[availableTags.length % LRP_BUCKET_PALETTE.length];
-        const createButton=form.createEl("button",{text:"创建并添加"});
+        const createButton=form.createEl('button',{text:'创建并添加'});
         let pending=false;
         const create=async()=>{
             if (pending) return;
@@ -5858,6 +6211,7 @@ class TaskDetailView extends obsidian.ItemView {
                 cls: "planner-cost-input"
             });
             estInput.value = task.costEstimate ? String(task.costEstimate) : "";
+            estInput.setAttribute("aria-label","预计金额");
             const commitEst = async () => {
                 const val = parseFloat(estInput.value) || 0;
                 await this.update({ costEstimate: val });
@@ -5885,6 +6239,7 @@ class TaskDetailView extends obsidian.ItemView {
                 cls: "planner-cost-input"
             });
             actInput.value = task.costActual ? String(task.costActual) : "";
+            actInput.setAttribute("aria-label","实际金额");
             const commitAct = async () => {
                 const val = parseFloat(actInput.value) || 0;
                 await this.update({ costActual: val });
@@ -7750,7 +8105,7 @@ class TaskListModal extends obsidian.Modal {
     onOpen() {
         this.contentEl.addClass("dashboard-task-modal-content");
         const header = this.contentEl.createDiv("dashboard-task-modal-header");
-        header.createEl("h3", { text: this.modalTitle });
+        header.createEl("h3", { text: lrpText(this.modalTitle) });
         const closeBtn = header.createEl("button", { cls: "dashboard-task-modal-close" });
         const closeIcon = closeBtn.createSpan({ cls: "dashboard-task-modal-close-icon" });
         obsidian.setIcon(closeIcon, "x");
@@ -7796,10 +8151,10 @@ class TaskListModal extends obsidian.Modal {
                 priorityPill.style.backgroundColor = this.getPriorityColor(task.priority);
             }
             if (task.dueDate) {
-                meta.createSpan({ text: `Due: ${task.dueDate}`, cls: "dashboard-task-modal-due" });
+                meta.createSpan({ text: `截止：${task.dueDate}`, cls: "dashboard-task-modal-due" });
             }
-            taskItem.onclick = () => {
-                this.close();
+            taskItem.onclick = event => {
+                event.stopPropagation();
                 this.plugin.openTaskDetail(task);
             };
         });
@@ -8182,6 +8537,9 @@ class DashboardView extends obsidian.ItemView {
                 await this.toggleHideProject(stats.projectId);
             };
         }
+        if (activeProject) {
+            addLrpProjectEditButton(header,this.plugin,activeProject,() => this.render());
+        }
         // KPI Grid
         const kpiGrid = projectCard.createDiv("dashboard-kpi-grid");
         const hiddenKPIs = new Set(this.plugin.settings.dashboardHiddenKPIs || []);
@@ -8238,6 +8596,7 @@ class DashboardView extends obsidian.ItemView {
         this.renderKPICard(statsGrid, "Has Dependencies", stats.tasksWithDependencies, "git-branch", "#6366f1", () => this.showTaskListModal("Tasks with Dependencies", dependencyTasks), "has-dependencies");
         this.renderKPICard(statsGrid, "Not Started", stats.notStartedTasks, "circle", "#6c757d", () => this.showTaskListModal("Not Started Tasks", notStartedTasks), "not-started");
         alertsGrid.style.setProperty("--lrp-summary-count", String(alertsGrid.childElementCount || 1));
+        if(activeProject)renderLrpScoreAnalysis(projectCard,this.plugin,activeProject,allTasks);
         // Effort section (only show if any tasks have effort data and not hidden)
         if (false) { // Effort tracking hidden in personal planning mode.
             const effortSection = projectCard.createDiv("dashboard-section");
@@ -8255,46 +8614,8 @@ class DashboardView extends obsidian.ItemView {
         }
         // Cost / Budget section (show if any tasks have cost data or budget is set)
         const hasCostData = stats.totalEstimatedCost > 0 || stats.totalActualCost > 0 || stats.budgetTotal > 0;
-        if (hasCostData && !hiddenKPIs.has("cost-section")) {
-            const activeProj = this.plugin.settings.projects?.find(p => p.id === stats.projectId);
-            const currency = activeProj?.currencySymbol || "$";
-            const costSection = projectCard.createDiv("dashboard-section");
-            costSection.createEl("h3", { text: lrpText("Budget & Cost") });
-            // Budget progress bar (if budget is set)
-            if (stats.budgetTotal > 0) {
-                this.renderBudgetProgressBar(costSection, stats.budgetUsedPercent, currency, stats.totalActualCost, stats.budgetTotal);
-            }
-            const costGrid = projectCard.createDiv("dashboard-kpi-grid");
-            if (stats.budgetTotal > 0) {
-                this.renderKPICard(costGrid, "Budget", formatCurrency(stats.budgetTotal, currency), "wallet", "#6366f1");
-            }
-            this.renderKPICard(costGrid, "Estimated", formatCurrency(stats.totalEstimatedCost, currency), "calculator", "#0a84ff");
-            this.renderKPICard(costGrid, "Actual", formatCurrency(stats.totalActualCost, currency), "receipt", "#2f9e44");
-            if (stats.budgetTotal > 0) {
-                const remainingColor = stats.budgetRemaining < 0 ? "#d70022" : "#2f9e44";
-                this.renderKPICard(costGrid, "Remaining", formatCurrency(stats.budgetRemaining, currency), "piggy-bank", remainingColor);
-            }
-            if (stats.overBudgetTaskCount > 0) {
-                const overBudgetTasks = allTasks.filter(t => {
-                    if (!t.costType)
-                        return false;
-                    const est = t.costType === "hourly"
-                        ? ((t.effortCompleted ?? 0) + (t.effortRemaining ?? 0)) * (t.hourlyRate ?? activeProj?.defaultHourlyRate ?? 0)
-                        : (t.costEstimate ?? 0);
-                    const act = t.costType === "hourly"
-                        ? (t.effortCompleted ?? 0) * (t.hourlyRate ?? activeProj?.defaultHourlyRate ?? 0)
-                        : (t.costActual ?? 0);
-                    return est > 0 && act > est;
-                });
-                this.renderKPICard(costGrid, "Over Budget", stats.overBudgetTaskCount, "alert-triangle", "#d70022", () => this.showTaskListModal("Over-Budget Tasks", overBudgetTasks));
-            }
-            // "View Cost Report" button
-            const reportBtn = costSection.createEl("button", {
-                text: lrpText("View Cost Report"),
-                cls: "dashboard-cost-report-btn"
-            });
-            reportBtn.onclick = () => this.showCostReportModal(stats.projectId, allTasks);
-        }
+        if (hasCostData && !hiddenKPIs.has("cost-section") && activeProject) renderLrpCostDashboardSection(projectCard,this.plugin,activeProject,allTasks);
+        if(activeProject)renderLrpProjectReview(projectCard,this.plugin,activeProject,allTasks);
         return projectCard;
     }
     renderBudgetProgressBar(container, percentage, currency, actual, total) {
@@ -8320,7 +8641,7 @@ class DashboardView extends obsidian.ItemView {
         const container = this.containerEl;
         const thisRender = ++this.renderVersion;
         // Save scroll position before clearing
-        const existingWrapper = container.querySelector('.planner-dashboard-wrapper');
+        const existingWrapper = container.querySelector('.dashboard-content');
         if (existingWrapper && this.savedScrollTop === null) {
             this.savedScrollTop = existingWrapper.scrollTop;
         }
@@ -8381,7 +8702,7 @@ class DashboardView extends obsidian.ItemView {
             requestAnimationFrame(() => {
                 if (thisRender !== this.renderVersion)
                     return;
-                wrapper.scrollTop = scrollPos;
+                content.scrollTop = scrollPos;
             });
         }
         const settings = this.plugin.settings;
@@ -8481,49 +8802,8 @@ class DashboardView extends obsidian.ItemView {
             this.renderProjectDashboard(content, stats, tasks);
         }
         if(finder){
-            finder.createEl('h3',{text:'查找项目'});
-            const search=finder.createEl('input',{attr:{type:'search',placeholder:'搜索项目…','aria-label':'查找项目'}});
-            const filter=finder.createEl('select',{cls:'lrp-dashboard-status-filter',attr:{'aria-label':'项目完成状态'}});
-            for(const [value,text] of [['all','全部'],['unfinished','未完成'],['completed','已完成'],['in-progress','进行中'],['not-started','未开始'],['blocked','受阻'],['overdue','逾期'],['abandoned','已放弃']])filter.createEl('option',{value,text});
-            filter.value=this.lrpDashboardStatus || 'all';
-            search.value=this.lrpDashboardSearch || '';
-            const list=finder.createDiv('lrp-dashboard-project-list');
-            const focus=(id,scroll=true)=>{
-                this.lrpFocusedProject=id;
-                for(const card of content.querySelectorAll('.dashboard-project-card')){
-                    const selected=card.dataset.projectId===id;
-                    card.classList.toggle('lrp-dashboard-focused',selected);
-                    if(selected && scroll && !card.hidden){
-                        const breathingRoom=Math.max(20,(content.clientHeight-card.offsetHeight)/2);
-                        content.style.paddingTop=`${breathingRoom}px`;content.style.paddingBottom=`${breathingRoom}px`;
-                        card.scrollIntoView({behavior:'smooth',block:'center'});
-                    }
-                }
-                for(const button of list.querySelectorAll('button'))button.setAttribute('aria-pressed',String(button.dataset.projectId===id));
-            };
-            const draw=()=>{
-                list.empty();
-                const hidden=new Set(settings.dashboardHiddenProjects || []);
-                const visible=this.getSortedProjects(projects).filter(p=>{
-                    if(hidden.has(p.id) || !p.name.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()))return false;
-                    const tasks=this.plugin.taskStore.getAllForProject(p.id) || [];
-                    return matchesLrpProjectStatus(this.plugin,tasks,filter.value);
-                });
-                const ids=new Set(visible.map(p=>p.id));
-                for(const card of content.querySelectorAll('.dashboard-project-card'))card.hidden=!ids.has(card.dataset.projectId);
-                content.style.paddingTop='12px';content.style.paddingBottom='24px';
-                for(const project of visible){
-                    const button=list.createEl('button',{text:project.name,attr:{'aria-pressed':String(this.lrpFocusedProject===project.id)}});
-                    button.dataset.projectId=project.id;
-                    button.style.setProperty('--lrp-project-color',project.calendarColor);
-                    button.onclick=()=>focus(project.id);
-                }
-                if(!visible.length)list.createDiv({text:'没有匹配的项目'});
-            };
-            search.oninput=()=>{this.lrpDashboardSearch=search.value;draw();};
-            filter.onchange=()=>{this.lrpDashboardStatus=filter.value;draw();};
-            draw();
-            if(this.lrpFocusedProject)requestAnimationFrame(()=>focus(this.lrpFocusedProject));
+            const records=[...content.querySelectorAll('.dashboard-project-card')].map(section=>({section,project:projects.find(project=>project.id===section.dataset.projectId)})).filter(record=>record.project);
+            buildLrpGroupedProjectFinder(finder,this,records,'lrpDashboard');
         }
 
     }
@@ -8752,9 +9032,9 @@ class MyDayView extends obsidian.ItemView {
         }
         return map;
     }
-    applyFilters(items) {
+    applyFilters(items, includeCompleted = false) {
         return items.filter(({ task }) => {
-            if (!this.currentFilters.showCompleted && getLrpTaskState(this.plugin,task).done)
+            if (!includeCompleted && !this.currentFilters.showCompleted && getLrpTaskState(this.plugin,task).done)
                 return false;
             if (this.currentFilters.priority !== "All" && task.priority !== this.currentFilters.priority) {
                 return false;
@@ -8766,6 +9046,11 @@ class MyDayView extends obsidian.ItemView {
             }
             return true;
         });
+    }
+    getDayCompletionSummary(items) {
+        const counted=this.applyFilters(items,true);
+        const completed=counted.filter(({task})=>getLrpTaskState(this.plugin,task).done).length;
+        return {completed,total:counted.length,text:`${completed}/${counted.length} 项`};
     }
     // ---------------------------------------------------------------------------
     // Date formatting
@@ -9022,6 +9307,7 @@ class MyDayView extends obsidian.ItemView {
             const rawTasks = taskMap.get(dateStr) || [];
             const filtered = this.applyFilters(rawTasks);
             const column = columnsContainer.createDiv(`myday-week-col${isToday ? " myday-week-col-today" : ""}`);
+            this.attachLrpCalendarDropTarget(column, dateStr);
             // Column header
             const colHeader = column.createDiv("myday-week-col-header");
             colHeader.createDiv({
@@ -9032,9 +9318,11 @@ class MyDayView extends obsidian.ItemView {
                 text: String(date.getDate()),
                 cls: `myday-week-col-num${isToday ? " myday-week-col-num-today" : ""}`,
             });
+            const summary=this.getDayCompletionSummary(rawTasks);
             colHeader.createDiv({
-                text: `${filtered.length} 项任务`,
+                text: summary.text,
                 cls: "myday-week-col-count",
+                attr: {'aria-label':`${dateStr}，${summary.total}项任务，已完成${summary.completed}个`,title:`当前项目及筛选范围：已完成 ${summary.completed} / 共 ${summary.total} 项`},
             });
             // Column body (task cards)
             const colBody = column.createDiv("myday-week-col-body");
@@ -9056,9 +9344,14 @@ class MyDayView extends obsidian.ItemView {
         const card = container.createDiv(`myday-week-card${getLrpTaskState(this.plugin,task).done ? " myday-week-card-completed" : ""}`);
         card.style.setProperty("--lrp-project-color", getProjectCalendarColor(this.plugin.settings.projects || [], projectId));
         card.setAttribute("title", projectName);
+        card.setAttribute("draggable", "true");
+        card.ondragstart = (event) => this.startLrpCalendarDrag(event, item, card);
+        card.ondragend = () => this.endLrpCalendarDrag(card);
         // Top row: checkbox + title
+        if(task._lrpSubId || task.parentId)card.classList.add("lrp-calendar-subtask");
         const cardTop = card.createDiv("myday-week-card-top");
-        const checkbox = cardTop.createEl("input", { attr: { type: "checkbox" } });
+        const checkCell = cardTop.createDiv("lrp-task-first-line-check");
+        const checkbox = checkCell.createEl("input", { attr: { type: "checkbox" } });
         checkbox.checked = getLrpTaskState(this.plugin,task).done;
         checkbox.onclick = (evt) => evt.stopPropagation();
         checkbox.onchange = async () => {
@@ -9084,6 +9377,57 @@ class MyDayView extends obsidian.ItemView {
             evt.preventDefault();
             this.showRowMenu(item, evt);
         };
+    }
+    // ---------------------------------------------------------------------------
+    // Drag to reschedule — dropping a card on a day makes that date its due date
+    // ---------------------------------------------------------------------------
+    startLrpCalendarDrag(event, item, card) {
+        this.lrpDraggingEntry = item;
+        card?.classList?.add?.("myday-card-dragging");
+        if (event?.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+            try { event.dataTransfer.setData("text/plain", item?.task?.title || ""); } catch {}
+        }
+    }
+    endLrpCalendarDrag(card) {
+        this.lrpDraggingEntry = null;
+        card?.classList?.remove?.("myday-card-dragging");
+        this.containerEl?.querySelectorAll?.(".myday-drop-target")?.forEach?.((el) => el.classList.remove("myday-drop-target"));
+    }
+    attachLrpCalendarDropTarget(element, dateStr) {
+        element.ondragover = (event) => {
+            if (!this.lrpDraggingEntry) return;
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+            element.classList?.add?.("myday-drop-target");
+        };
+        element.ondragleave = (event) => {
+            if (element.contains?.(event.relatedTarget)) return;
+            element.classList?.remove?.("myday-drop-target");
+        };
+        element.ondrop = async (event) => {
+            event.preventDefault();
+            element.classList?.remove?.("myday-drop-target");
+            const entry = this.lrpDraggingEntry;
+            this.lrpDraggingEntry = null;
+            if (!entry) return;
+            await this.moveLrpCalendarEntry(entry, dateStr);
+        };
+    }
+    async moveLrpCalendarEntry(entry, dateStr) {
+        const task = entry?.task;
+        if (!task || !dateStr) return false;
+        const current = task._lrpRealDueDate || task.dueDate || null;
+        if (current === dateStr) return false;
+        try {
+            await updateLrpCalendarTask(this.taskStore, task, { dueDate: dateStr });
+            new obsidian.Notice(`已把“${task.title}”的截止日期改为 ${dateStr}`);
+            return true;
+        } catch (error) {
+            new obsidian.Notice("移动任务失败，请重试。");
+            console.error(error);
+            return false;
+        }
     }
     // ===========================================================================
     // MONTH content (calendar grid)
@@ -9122,10 +9466,12 @@ class MyDayView extends obsidian.ItemView {
                 cell.addClass("myday-month-cell-outside");
             if (isToday)
                 cell.addClass("myday-month-cell-today");
+            this.attachLrpCalendarDropTarget(cell, dateStr);
             // Date number
             const dayHeader=cell.createDiv('lrp-month-day-header');
             const numEl = dayHeader.createEl("button",{text:String(cur.getDate()),cls:"myday-month-cell-num lrp-day-open",attr:{type:"button","aria-label":`查看${dateStr}的全部安排`}});
-            dayHeader.createSpan({text:`${filtered.length} 项`,cls:`lrp-month-task-count${filtered.length ? '' : ' is-empty'}`,attr:{'aria-label':`${dateStr}，当前筛选下${filtered.length}个任务`,title:'当前项目范围及日历筛选下的任务数量'}});
+            const summary=this.getDayCompletionSummary(rawTasks);
+            dayHeader.createSpan({text:summary.text,cls:`lrp-month-task-count${summary.total ? '' : ' is-empty'}`,attr:{'aria-label':`${dateStr}，${summary.total}项任务，已完成${summary.completed}个`,title:`当前项目及筛选范围：已完成 ${summary.completed} / 共 ${summary.total} 项`}});
             numEl.onclick=()=>new LrpDayTasksModal(this.plugin,dateStr).open();
             if (isToday)
                 numEl.addClass("myday-month-cell-num-today");
@@ -9146,10 +9492,14 @@ class MyDayView extends obsidian.ItemView {
     renderMonthTask(cell, item) {
         const { task } = item;
         const taskEl = cell.createDiv("myday-month-task");
+        if(task._lrpSubId || task.parentId)taskEl.classList.add("lrp-calendar-subtask");
         if (getLrpTaskState(this.plugin,task).done)
             taskEl.addClass("myday-month-task-completed");
         taskEl.style.setProperty("--lrp-project-color", getProjectCalendarColor(this.plugin.settings.projects || [], item.projectId));
         taskEl.setAttribute("title", `${item.projectName || ""}${isUrgentPriority(task.priority) ? ` · ‼️ ${task.priority}` : ""}`);
+        taskEl.setAttribute("draggable", "true");
+        taskEl.ondragstart = (event) => this.startLrpCalendarDrag(event, item, taskEl);
+        taskEl.ondragend = () => this.endLrpCalendarDrag(taskEl);
         if (isUrgentPriority(task.priority)) this.createPriorityPill(taskEl, task.priority);
         taskEl.createSpan({ text: task.title, cls: "myday-month-task-title" });
         taskEl.onclick = () => this.plugin.openTaskDetail(task,{anchor:taskEl});
@@ -9512,12 +9862,20 @@ function addDays(dateStr, days) {
 }
 class TaskStore {
     constructor(plugin) {
-        this.tasks = [];
+        this.plugin = plugin;
         this.tasksByProject = {};
+        this.tasks = [];
         this.taskIndex = new Map();
         this.listeners = new Set();
         this.loaded = false;
         this.plugin = plugin;
+    }
+    // Resolve through the selected project, never a pointer left over from the previous view.
+    get tasks() {
+        return this.tasksByProject[this.activeProjectId] ||= [];
+    }
+    set tasks(tasks) {
+        this.tasksByProject[this.activeProjectId] = tasks;
     }
     // ---------------------------------------------------------------------------
     // VAULT FILE HELPERS — per-project .planner-tasks.json
@@ -9545,24 +9903,38 @@ class TaskStore {
                 return null;
             const raw = await adapter.read(filePath);
             const data = JSON.parse(raw);
-            return Array.isArray(data.tasks) ? data.tasks : null;
+            if (!Array.isArray(data.tasks) || data.projectId && data.projectId !== projectId)
+                throw new Error('任务文件格式或项目归属不匹配');
+            (this.plugin.lrpRootPlugin?.taskStore || this).lrpUnreadableProjects?.delete(projectId);
+            return data.tasks;
         }
-        catch {
-            return null;
+        catch (error) {
+            const root = this.plugin.lrpRootPlugin?.taskStore || this;
+            (root.lrpUnreadableProjects ||= new Set()).add(projectId);
+            throw new Error(`无法读取项目任务，已保留原数据：${error.message}`);
         }
     }
     /** Write a project's tasks to its vault file, creating the folder if needed. */
     async writeProjectFile(projectId, tasks) {
+        const root = this.plugin.lrpRootPlugin?.taskStore || this;
+        if (root.lrpUnreadableProjects?.has(projectId))throw new Error('任务文件读取失败，已阻止覆盖；请先重新加载项目。');
+        const revisions = root.lrpProjectRevisions ||= {};
+        revisions[projectId] = (revisions[projectId] || 0) + 1;
         const filePath = this.getProjectFilePath(projectId);
         if (!filePath)
             return;
         const adapter = this.plugin.app.vault.adapter;
         const folder = obsidian.normalizePath(filePath.substring(0, filePath.lastIndexOf("/")));
+        const writing=root.lrpWritingProjects ||= {};
+        writing[projectId]=(writing[projectId] || 0)+1;
+        try {
         if (folder && !(await adapter.exists(folder))) {
             await adapter.mkdir(folder);
         }
         const data = { version: 1, projectId, tasks };
         await adapter.write(filePath, JSON.stringify(data, null, 2));
+        (this.plugin.lrpRootPlugin || this.plugin).lrpAppleSync?.schedule();
+        } finally {writing[projectId]--;}
     }
     /**
      * Copy all tasks from sourceProjectId to targetProjectId, assigning fresh IDs
@@ -9599,6 +9971,16 @@ class TaskStore {
     // LOADING WITH FULL MIGRATION + NON-DESTRUCTIVE LOGIC
     // ---------------------------------------------------------------------------
     async load() {
+        if(this.lrpLoadPromise)return this.lrpLoadPromise;
+        const pending=this.loadProjectSnapshot();
+        this.lrpLoadPromise=pending;
+        try{return await pending;}
+        finally{if(this.lrpLoadPromise===pending)this.lrpLoadPromise=null;}
+    }
+    async loadProjectSnapshot() {
+        const projects=[...(this.plugin.settings.projects || [])];
+        let revisions={...(this.lrpProjectRevisions || {})};
+        const writingAtStart=new Set(Object.keys(this.lrpWritingProjects || {}).filter(id=>this.lrpWritingProjects[id]>0));
         const raw = ((await this.plugin.loadData()) || {});
         // -----------------------------------------------------------------------
         // MIGRATION: move legacy tasksByProject / tasks from data.json to vault files
@@ -9626,23 +10008,30 @@ class TaskStore {
         if (migrated) {
             // Persist cleaned data.json (settings only, no task data)
             await this.plugin.saveData(raw);
+            revisions={...(this.lrpProjectRevisions || {})};
         }
         // -----------------------------------------------------------------------
         // Load all projects from their vault files
         // -----------------------------------------------------------------------
-        this.tasksByProject = {};
-        this.taskIndex.clear();
-        for (const project of this.plugin.settings.projects) {
+        // Build off to the side: subscribers/scoped views must never see a partially loaded map.
+        const snapshot = {};
+        for (const project of projects) {
             const tasks = await this.readProjectFile(project.id) ?? [];
-            this.tasksByProject[project.id] = tasks;
+            applyLrpProgress(tasks);
+            snapshot[project.id] = tasks;
+        }
+        const currentProjects=new Set((this.plugin.settings.projects || []).map(project=>project.id));
+        for(const id of Object.keys(this.tasksByProject))if(!currentProjects.has(id))delete this.tasksByProject[id];
+        for(const [id,tasks] of Object.entries(snapshot)) {
+            if(!currentProjects.has(id))continue;
+            // A save during the read is newer than this snapshot. Keep the live project.
+            if((this.lrpProjectRevisions?.[id] || 0)!==(revisions[id] || 0))continue;
+            if(writingAtStart.has(id) || this.lrpWritingProjects?.[id]>0)continue;
+            this.tasksByProject[id]=tasks;
         }
         const projectId = this.activeProjectId;
-        // Ensure active project has a file even if brand-new
-        if (!this.tasksByProject[projectId]) {
-            this.tasksByProject[projectId] = [];
-            await this.writeProjectFile(projectId, []);
-        }
-        for (const tasks of Object.values(this.tasksByProject)) applyLrpProgress(tasks);
+        // Loading/switching projects never creates or replaces real task files.
+        if (!this.tasksByProject[projectId])this.tasksByProject[projectId] = [];
         this.tasks = this.tasksByProject[projectId];
         this.rebuildIndex();
         this.loaded = true;
@@ -9719,7 +10108,7 @@ class TaskStore {
     refresh() {
         this.emit();
     }
-    async addTask(title) {
+    async addTask(title, overrides) {
         const today = getTodayDate();
         const task = {
             id: crypto.randomUUID(),
@@ -9733,6 +10122,8 @@ class TaskStore {
             lastModifiedDate: today,
             startDate: today, // Set start date to today by default
         };
+        if (overrides)
+            Object.assign(task, overrides);
         this.tasks.push(task);
         this.taskIndex.set(task.id, task);
         this.updateProjectTimestamp();
@@ -9866,6 +10257,16 @@ class TaskStore {
         }
         if (!task)
             return;
+        // Moving between bucket weeks carries default Monday–Sunday dates to the target week.
+        if (partial.bucketId !== undefined && partial.bucketId !== task.bucketId) {
+            const movedDates = getLrpBucketMoveDefaults(task, task.bucketId, partial.bucketId, this.plugin.settings.projects || []);
+            if (movedDates) {
+                if (partial.startDate === undefined)
+                    partial.startDate = movedDates.startDate;
+                if (partial.dueDate === undefined)
+                    partial.dueDate = movedDates.dueDate;
+            }
+        }
         // Track old title for file rename detection
         const oldTitle = task.title;
         const titleChanged = partial.title !== undefined && partial.title !== oldTitle;
@@ -9895,6 +10296,7 @@ class TaskStore {
         const oldDueDate = task.dueDate;
         // Set last modified timestamp
         partial.lastModifiedDate = getTodayDate();
+        const reviewRequests = prepareLrpSubtaskReviews(this,task,partial,crossProjectId ?? this.activeProjectId);
         // Object.assign mutates the task in-place. For cross-project tasks
         // this correctly modifies the reference inside tasksByProject[crossProjectId].
         Object.assign(task, partial);
@@ -9944,6 +10346,7 @@ class TaskStore {
         }
         // Single emit after ALL work is done — views render once with final data
         this.emit();
+        if(!options?.deferReviewDialog)enqueueLrpSubtaskReviews(this.plugin,reviewRequests);
     }
     // ---------------------------------------------------------------------------
     // Parent Task Roll-Up (MS Project style)
@@ -10307,11 +10710,11 @@ class TaskStore {
         this.emit();
     }
     getTaskById(id) {
-        return this.taskIndex.get(id);
+        return this.tasks.find(task => task.id === id);
     }
     /** Look up a task by id across all loaded projects, not just the active one. */
     getTaskByIdAcrossProjects(id) {
-        const indexed = this.taskIndex.get(id);
+        const indexed = this.getTaskById(id);
         if (indexed)
             return indexed;
         for (const tasks of Object.values(this.tasksByProject)) {
@@ -11291,6 +11694,9 @@ class ProjectPlannerPlugin extends obsidian.Plugin {
         // Initialize central task store
         this.taskStore = new TaskStore(this);
         await this.taskStore.load();
+        this.lrpAppleSync = new LrpAppleRemindersSync(this);
+        try { await this.lrpAppleSync.initialize(); }
+        catch(error) { this.lrpAppleSync.status=error.message; console.error("Apple sync initialization:",error.message); }
         // Initialize task sync system
         this.taskSync = new TaskSync(this.app, this);
         // Initialize daily note task scanner
@@ -11345,13 +11751,16 @@ class ProjectPlannerPlugin extends obsidian.Plugin {
         this.registerView(VIEW_TYPE_DEPENDENCY_GRAPH, (leaf) => new DependencyGraphView(leaf, this));
         // Register Gantt View (Timeline)
         this.registerView(VIEW_TYPE_GANTT, (leaf) => new GanttView(leaf, this));
+        this.registerEvent(this.app.workspace.on('active-leaf-change',leaf=>{
+            if(leaf?.view?.getViewType?.()===VIEW_TYPE_GANTT)void focusLrpTimelineCurrentWeek(leaf.view);
+        }));
         // Register Dashboard View
         this.registerView(VIEW_TYPE_DASHBOARD, (leaf) => new DashboardView(leaf, this));
         // Register My Tasks View
         this.registerView(VIEW_TYPE_MY_DAY, (leaf) => new MyDayView(leaf, this));
         // Command palette entry
         this.addCommand({
-            id: "open-lrp-program",
+            id: "open-long-range-planner",
             name: lrpText("Open long-range-planner"),
             callback: async () => await this.activateView(),
         });
@@ -11407,7 +11816,8 @@ class ProjectPlannerPlugin extends obsidian.Plugin {
             }
         });
         // Settings tab
-        this.addSettingTab(new ProjectPlannerSettingTab(this.app, this));
+        this.settingTab = new ProjectPlannerSettingTab(this.app, this);
+        this.addSettingTab(this.settingTab);
     }
     migrateProjectTimestamps() {
         let updated = false;
@@ -11470,6 +11880,7 @@ class ProjectPlannerPlugin extends obsidian.Plugin {
             active: true,
         });
         this.app.workspace.revealLeaf(leaf);
+        if(viewType===VIEW_TYPE_GANTT)await focusLrpTimelineCurrentWeek(leaf.view);
         return leaf;
     }
     // ---------------------------------------------------------------------------
@@ -11678,6 +12089,9 @@ class ProjectPlannerPlugin extends obsidian.Plugin {
     // Cleanup
     // ---------------------------------------------------------------------------
     onunload() {
+        this.lrpScoringUnloaded=true;
+        this.lrpScoreQueue=[];
+        this.lrpActiveScoreModal?.close();
         if (this.dailyNoteScanner) {
             this.dailyNoteScanner.destroy();
         }
@@ -11709,42 +12123,9 @@ const LRP_FUNCTION_HELP = {
   "资料链接与附件": "填写显示名称和网址，或用 [[笔记名称]] 链接库内笔记。点击添加后即可从这张卡片打开资料。",
   "费用设置": "此处配置整个项目的预算、默认费率和货币符号。无需记录金钱成本的项目可以保持默认值。"
 };
-function addLrpHelpDisclosure(owner, root, settings = false) {
-  if (!root?.querySelectorAll || !root.ownerDocument) return;
-  owner.lrpHelpOpen ||= new Map();
-  const doc = root.ownerDocument;
-  function attach(label, content, key) {
-    if (!label || label.closest('.lrp-help-toggle')) return;
-    const details = doc.createElement('details');
-    details.className = 'lrp-help-toggle';
-    const summary = doc.createElement('summary');
-    const hint = doc.createElement('span');
-    hint.className = 'lrp-help-hint';
-    hint.textContent = '用途说明';
-    label.parentNode.insertBefore(details, label);
-    summary.appendChild(label);
-    summary.appendChild(hint);
-    details.appendChild(summary);
-    const body = doc.createElement('div');
-    body.className = 'lrp-help-body';
-    if (typeof content === 'string') body.textContent = content;
-    else body.appendChild(content);
-    details.appendChild(body);
-    details.open = owner.lrpHelpOpen.get(key) || false;
-    details.addEventListener('toggle', () => owner.lrpHelpOpen.set(key, details.open));
-  }
-  if (settings) {
-    root.querySelectorAll('.setting-item').forEach((row, index) => {
-      const label = row.querySelector('.setting-item-name');
-      const desc = row.querySelector('.setting-item-description');
-      if (label && desc?.textContent.trim()) attach(label, desc, 'setting:'+index+':'+label.textContent);
-    });
-  }
-  root.querySelectorAll('h2,h3').forEach(heading => {
-    const label = heading.textContent.trim();
-    const help = LRP_FUNCTION_HELP[label] || (label.startsWith('费用设置') ? LRP_FUNCTION_HELP['费用设置'] : null);
-    if (help) attach(heading, help, 'feature:'+label);
-  });
+function addLrpHelpDisclosure(owner,root,settings=false) {
+  root?.querySelectorAll?.('.setting-item-description').forEach(node=>node.remove());
+  root?.querySelectorAll?.('.planner-percent-hint,.planner-rolled-up-hint,.planner-cost-rate-hint,.lrp-progress-description,.planner-no-tags,.planner-cost-type-label,.planner-cost-label,.planner-detail-content .setting-item-description').forEach(node=>node.remove());
 }
 function getLrpDetailGroup(label) {
   const groups = {
@@ -11791,6 +12172,9 @@ function groupLrpTaskDetails(root) {
     }
     if (field) field.appendChild(child);
   }
+  for(const name of ['基本信息','时间安排','清单与展示','完成进度','费用预算','依赖与资料']){
+    const fields=groups.get(name);if(fields)cards.appendChild(fields.parentNode);
+  }
   if (groups.size) root.appendChild(cards);
 }
 function installLrpHelpRenderer(prototype, method, settings) {
@@ -11812,17 +12196,24 @@ function getVisibleLrpProjects(settings) {
   return settings.showAllProjects ? projects : projects.filter(p => p.id === settings.activeProjectId);
 }
 function createLrpProjectScope(plugin, projectId) {
+  plugin=plugin.lrpRootPlugin || plugin;
   const scope = Object.create(plugin);
+  scope.lrpRootPlugin = plugin.lrpRootPlugin || plugin;
   scope.lrpEmbeddedScope = true;
-  scope.settings = {...plugin.settings, activeProjectId: projectId, showAllProjects: false};
+  scope.settings = Object.assign(Object.create(plugin.settings),{activeProjectId: projectId, showAllProjects: false});
   scope.saveSettings = async () => {
     const {activeProjectId, showAllProjects, ...changes} = scope.settings;
     Object.assign(plugin.settings, changes);
     await plugin.saveSettings();
   };
   const store = new TaskStore(scope);
-  store.tasksByProject = plugin.taskStore.tasksByProject;
-  store.tasks = store.tasksByProject[projectId] || [];
+  // Follow the current canonical map even after reload or a sync replaces an array.
+  // A private override is used only by staged Apple completion transactions.
+  Object.defineProperty(store,'tasksByProject',{
+    configurable:true,get(){return this.lrpProjectMapOverride || plugin.taskStore.tasksByProject;},
+    set(value){this.lrpProjectMapOverride=value;}
+  });
+  store.load=()=>plugin.taskStore.load();
   store.loaded = true;
   store.rebuildIndex();
   const save = store.saveQuietly;
@@ -11832,9 +12223,37 @@ function createLrpProjectScope(plugin, projectId) {
     plugin.taskStore.rebuildIndex();
   };
   scope.taskStore = store;
+  const emit=store.emit;
+  store.emit=function(){emit.call(store);if(store.lrpEmitToRoot && !store.lrpProjectMapOverride)plugin.taskStore.emit();};
   scope.openTaskDetail = (task,options) => plugin.openTaskDetail(task,options);
   return scope;
 }
+// Pin each mutation to its task's project before the first await. Selecting another
+// project while a disk write is pending must never redirect its continuation.
+function installLrpTaskStoreIsolation() {
+  for(const name of ['addTask','addTaskAtIndex','addTaskFromObject','updateTask','deleteTask','setOrder','toggleCollapsed','makeSubtask','promoteSubtask','moveTaskToProject','rollUpParentFields','cascadeDependencyDates']) {
+    const original=TaskStore.prototype[name];
+    TaskStore.prototype[name]=function(...args){
+      if(this.plugin.lrpRootPlugin || this.plugin.taskStore!==this)return original.apply(this,args);
+      let projectId=this.activeProjectId;
+      const taskId=name==='setOrder'?args[0]?.[0]:name.startsWith('addTask')?null:args[0];
+      if(taskId && !this.getAllForProject(projectId).some(task=>task.id===taskId)) {
+        const owner=Object.entries(this.tasksByProject).find(([,tasks])=>tasks.some(task=>task.id===taskId));
+        if(owner)projectId=owner[0];
+      }
+      const bucketId=name==='addTask'?args[1]?.bucketId:name==='addTaskAtIndex'?args[2]?.bucketId:name==='addTaskFromObject'?args[0]?.bucketId:null;
+      if(bucketId) {
+        const owner=(this.plugin.settings.projects || []).find(project=>project.buckets?.some(bucket=>bucket.id===bucketId));
+        if(owner)projectId=owner.id;
+      }
+      if(!(this.plugin.settings.projects || []).some(project=>project.id===projectId))return original.apply(this,args);
+      const scoped=createLrpProjectScope(this.plugin,projectId).taskStore;
+      scoped.lrpEmitToRoot=true;
+      return original.apply(scoped,args);
+    };
+  }
+}
+installLrpTaskStoreIsolation();
 async function clearLrpEmbeddedViews(view) {
   const children = view.lrpEmbeddedViews || [];
   view.lrpEmbeddedViews = [];
@@ -11871,60 +12290,104 @@ async function openLrpProjectFromHeading(view,projectId) {
     await (view.lrpRenderProjectScope ? view.lrpRenderProjectScope() : view.render());
   }finally{view.lrpProjectOpening=false;}
 }
-function createLrpProjectFinder(container,view,records,key='lrpBoard') {
+// Vault-relative folder that owns a project's task file. Rejects traversal so a malformed storageKey cannot escape.
+function getLrpProjectFolderPath(plugin,project) {
+  const base=String(plugin.settings.projectsBasePath || 'long-range-planner').replace(/^\/+|\/+$/g,'');
+  const folder=String(project.storageKey ?? project.name ?? '').trim();
+  if(!folder || folder==='.' || folder==='..' || /[\\/]/.test(folder))return null;
+  const path=base ? `${base}/${folder}` : folder;
+  return path.replace(/\/{2,}/g,'/');
+}
+async function removeLrpProjectFolder(plugin,project) {
+  const path=getLrpProjectFolderPath(plugin,project);
+  if(!path)return {path:null,error:new Error('项目目录名无效，已跳过目录删除。')};
+  const adapter=plugin.app?.vault?.adapter;
+  if(!adapter)return {path,error:new Error('无法访问笔记库文件系统。')};
+  try{
+    if(await adapter.exists(path))await adapter.rmdir(path,true);
+    return {path,error:null};
+  }catch(error){return {path,error};}
+}
+// Deletes whole projects: settings entries first (with rollback), then their folders and task files.
+async function deleteLrpProjects(plugin,ids) {
+  const settings=plugin.settings;
+  const current=settings.projects || [];
+  const remove=new Set(ids || []);
+  if(!remove.size)throw new Error('请先选择要删除的项目。');
+  const removed=current.filter(project=>remove.has(project.id));
+  if(!removed.length)throw new Error('所选项目已不存在，请刷新后重试。');
+  const kept=current.filter(project=>!remove.has(project.id));
+  if(!kept.length)throw new Error('至少保留一个项目。');
+  const previousProjects=settings.projects;
+  const previousActive=settings.activeProjectId;
+  const previousAll=settings.showAllProjects;
+  settings.projects=kept;
+  if(remove.has(settings.activeProjectId))settings.activeProjectId=kept[0].id;
+  try{await plugin.saveSettings();}
+  catch(error){
+    settings.projects=previousProjects;
+    settings.activeProjectId=previousActive;
+    settings.showAllProjects=previousAll;
+    try{refreshLrpHiddenProjectFolders(plugin);}catch{}
+    throw error;
+  }
+  // Only after settings are safely saved: a failed save must never leave data folders missing.
+  const failures=[];
+  const keptKeys=new Set(kept.map(project=>String(project.storageKey ?? project.name ?? '').trim()));
+  for(const project of removed){
+    const key=String(project.storageKey ?? project.name ?? '').trim();
+    if(keptKeys.has(key))continue;
+    const result=await removeLrpProjectFolder(plugin,project);
+    if(result.error)failures.push({project,path:result.path,error:result.error});
+    if(plugin.taskStore?.tasksByProject)delete plugin.taskStore.tasksByProject[project.id];
+  }
+  if(remove.has(previousActive) && plugin.taskStore?.load){
+    try{await plugin.taskStore.load();}catch(error){console.error(error);}
+  }
+  if(failures.length)console.warn('部分项目目录未能删除，文件已保留：',failures);
+  return {removed,failures};
+}
+class LrpDeleteProjectsModal extends obsidian.Modal {
+  constructor(plugin,projects,onConfirm) {
+    super(plugin.app);
+    this.plugin=plugin;this.projects=projects;this.onConfirm=onConfirm;
+  }
+  onOpen() {
+    const content=this.contentEl;content.empty();
+    content.createEl('h2',{text:`删除 ${this.projects.length} 个项目？`});
+    const list=content.createEl('ul',{cls:'lrp-delete-project-list'});
+    for(const project of this.projects)list.createEl('li',{text:project.name});
+    content.createEl('p',{text:'将同时删除项目目录及其中的任务文件，删除后无法恢复。',cls:'lrp-delete-project-hint'});
+    const errorText=content.createDiv({cls:'lrp-delete-project-error',attr:{role:'alert'}});
+    const actions=content.createDiv({cls:'lrp-delete-project-actions'});
+    const cancel=actions.createEl('button',{text:'取消',attr:{type:'button'}});
+    const confirm=actions.createEl('button',{text:`删除 ${this.projects.length} 个`,cls:'mod-warning',attr:{type:'button'}});
+    cancel.onclick=()=>this.close();
+    confirm.onclick=async()=>{
+      if(confirm.disabled)return;
+      confirm.disabled=true;cancel.disabled=true;errorText.textContent='';
+      try{await this.onConfirm();}
+      catch(error){errorText.textContent=error?.message || '删除项目失败，请重试。';confirm.disabled=false;cancel.disabled=false;return;}
+      this.close();
+    };
+  }
+  onClose() { this.contentEl.empty(); }
+}
+function createLrpProjectFinder(container,view,records,key='lrpBoard',options={}) {
   const shell=container.createDiv('lrp-project-finder-shell');
   const sidebar=shell.createDiv('lrp-project-finder');
-  sidebar.createEl('h3',{text:'查找项目'});
-  const search=sidebar.createEl('input',{attr:{type:'search',placeholder:'搜索项目…','aria-label':'搜索项目名称'}});
-  search.value=view[key+'ProjectSearch'] || '';
-  const status=sidebar.createEl('select',{attr:{'aria-label':'项目状态'}});
-  for(const [value,text] of [['all','全部'],['unfinished','未完成'],['completed','已完成'],['notStarted','未开始'],['inProgress','进行中'],['blocked','受阻'],['overdue','逾期'],['abandoned','已放弃']])status.createEl('option',{text,value});
-  status.value=view[key+'ProjectStatus'] || 'all';
-  const list=sidebar.createDiv('lrp-project-finder-list');
-  const empty=sidebar.createDiv({text:'没有符合条件的项目',cls:'lrp-project-finder-empty'});
   const content=shell.createDiv('lrp-project-finder-content');
-  const buttons=new Map();
-  const focus=(id,scroll=true)=>{
-    view[key+'FocusedProject']=id;
-    for(const record of records){
-      const selected=record.project.id===id;
-      record.section.classList?.toggle?.('lrp-project-finder-focused',selected);
-      if(selected && scroll && !record.section.hidden)record.section.scrollIntoView?.({behavior:'smooth',block:'center'});
-    }
-    for(const [id,button] of buttons)button.setAttribute('aria-pressed',String(id===view[key+'FocusedProject']));
-  };
-  const open=async id=>{try{await openLrpProjectFromHeading(view,id);}catch(error){new obsidian.Notice('打开项目失败，请重试');console.error(error);}};
-  const refresh=()=>{
-    list.empty();buttons.clear();
-    const query=search.value.trim().toLocaleLowerCase();let count=0;
-    for(const record of records){
-      const {project,section}=record;
-      const tasks=view.plugin.taskStore.getAllForProject(project.id) || [];
-      const match=project.name.toLocaleLowerCase().includes(query) && matchesLrpDependencyProject(view.plugin,tasks,status.value);
-      const wasHidden=section.hidden;section.hidden=!match;
-      if(!match)continue;
-      count++;
-      if(wasHidden && record.child)void Promise.resolve(record.child.render()).catch(console.error);
-      const button=list.createEl('button',{text:project.name,attr:{type:'button','aria-pressed':String(project.id===view[key+'FocusedProject']),title:'单击定位，双击进入项目'}});
-      button.style.setProperty('--lrp-project-color',project.calendarColor);
-      button.onclick=()=>focus(project.id);
-      button.ondblclick=event=>{event.preventDefault();void open(project.id);};
-      buttons.set(project.id,button);
-    }
-    empty.hidden=count>0;focus(view[key+'FocusedProject'],false);
-  };
-  status.onchange=()=>{view[key+'ProjectStatus']=status.value;refresh();};
-  search.oninput=()=>{view[key+'ProjectSearch']=search.value;refresh();};
-  refresh();return {content,refresh,focus};
+  return {content,...buildLrpGroupedProjectFinder(sidebar,view,records,key)};
 }
 function addLrpBoardProjectFilters(container,view,records) {
-  return createLrpProjectFinder(container,view,records,'lrpBoard');
+  return createLrpProjectFinder(container,view,records,'lrpBoard',{onDeleted:()=>view.render()});
 }
 async function renderLrpAllProjects(view, ViewClass, active) {
   const generation = (view.lrpAllGeneration || 0) + 1;
   view.lrpAllGeneration = generation;
   await clearLrpEmbeddedViews(view);
   if (generation !== view.lrpAllGeneration) return;
+  if(!view.plugin.settings.showAllProjects || view.lrpClosed)return;
   const container = view.containerEl;
   container.empty();
   const wrapper = container.createDiv('lrp-all-projects-wrapper');
@@ -11933,8 +12396,8 @@ async function renderLrpAllProjects(view, ViewClass, active) {
   const finder=addLrpBoardProjectFilters(wrapper,view,records);
   const list=finder.content;list.classList.add('lrp-all-project-list');
   for (const project of view.plugin.settings.projects || []) {
-    if (generation !== view.lrpAllGeneration) return;
-    const section = list.createEl('section', {cls:'lrp-all-project-section'});
+    if (generation !== view.lrpAllGeneration || !view.plugin.settings.showAllProjects || view.lrpClosed) return;
+    const section = list.createEl('section', {cls:'lrp-all-project-section',attr:{'data-project-id':project.id}});
     section.style.setProperty('--lrp-project-color', project.calendarColor);
     const record={project,section,child:null};records.push(record);finder.refresh();
     const heading=section.createEl('h3', {text:project.name, cls:'lrp-all-project-heading',attr:{tabindex:'0',role:'button',title:'双击展开此项目（或按回车键）'}});
@@ -11944,6 +12407,8 @@ async function renderLrpAllProjects(view, ViewClass, active) {
     };
     heading.ondblclick=event=>{event.preventDefault();event.stopPropagation();void openProject();};
     heading.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();void openProject();}};
+    addLrpProjectEditButton(heading,view.plugin,project,()=>view.render());
+    renderLrpProjectOverview(section,view.plugin,project,()=>view.render());
     const host = section.createDiv('lrp-all-project-view');
     const scope = createLrpProjectScope(view.plugin, project.id);
     scope.lrpBoardVisibleWeeks=2;
@@ -12095,13 +12560,19 @@ function getLrpWeekInfo(value) {
 function updateLrpWeekLabels(labels, now = new Date()) {
   for(const label of labels){
     if(!label.isConnected){labels.delete(label);continue;}
-    label.textContent=`今天 · ${formatLrpWeek(now)}`;
+    label.textContent=formatLrpWeek(now);
   }
+}
+function refreshLrpDateStatus(plugin,now=new Date()) {
+  const today=toDateStr(now),previous=plugin.lrpStatusDate;plugin.lrpStatusDate=today;
+  if(previous && previous!==today)plugin.taskStore?.refresh?.();
 }
 function registerLrpWeekLabel(plugin,label) {
   if(!plugin.lrpWeekLabels){
     plugin.lrpWeekLabels=new Set();
-    const update=()=>updateLrpWeekLabels(plugin.lrpWeekLabels);
+    plugin.lrpStatusDate=toDateStr(new Date());
+    const update=()=>{const now=new Date();updateLrpWeekLabels(plugin.lrpWeekLabels,now);refreshLrpDateStatus(plugin,now);};
+    if(typeof plugin.registerInterval==='function')plugin.registerInterval(window.setInterval(update,60000));
     plugin.registerDomEvent(window,'focus',update);
     plugin.registerDomEvent(label.ownerDocument,'visibilitychange',update);
   }
@@ -12235,10 +12706,12 @@ function getLrpTaskState(plugin,reference,tasks,now=new Date()) {
   if(Object.prototype.hasOwnProperty.call(task,'_lrpRealDueDate'))task={...task,dueDate:task._lrpRealDueDate};
   const category=getLrpTaskCategory(task,tasks,getLrpPortfolioRules(plugin.settings),now);
   const progress=calculateLrpProgress(task,tasks);
-  const execution=task.status==='Blocked'?'Blocked':task.status==='In Progress' || progress>0?'In Progress':task.status && task.status!=='Completed'?task.status:'Not Started';
+  const schedule=getLrpTaskSchedule(task),today=toDateStr(now);
+  const inScheduledRange=Boolean(schedule.start && schedule.end && schedule.start<=today && today<=schedule.end);
+  const execution=inScheduledRange?'In Progress':task.status==='Blocked'?'Blocked':task.status==='In Progress' || progress>0?'In Progress':task.status && task.status!=='Completed'?task.status:'Not Started';
   const status=category.abandoned?'Abandoned':category.done?'Completed':category.overdue?'Overdue':execution;
   const labels={Abandoned:'已放弃',Completed:'已完成',Overdue:'逾期'};
-  return {...category,status,execution,progress,label:labels[status] || lrpText(status),actionable:!category.abandoned && !category.done};
+  return {...category,status,execution,progress,inScheduledRange,label:labels[status] || lrpText(status),actionable:!category.abandoned && !category.done};
 }
 function getLrpTaskDisplayStatus(plugin,task,tasks,now=new Date()) {
   return task ? getLrpTaskState(plugin,task,tasks,now).label : '—';
@@ -12479,9 +12952,9 @@ function renderLrpPredecessorLinks(container,plugin,task,tasks) {
 function getLrpCalendarTasks(tasks) {
   const result=[];
   for(const task of tasks){
-    const datedChildren=tasks.some(child=>child.parentId===task.id && (child.dueDate || child.startDate));
+    const hasChildren=tasks.some(child=>child.parentId===task.id);
     const embedded=(task.subtasks || []).filter(sub=>sub.dueDate || sub.startDate);
-    if(!datedChildren && !embedded.length)result.push({...task,_lrpRealDueDate:task.dueDate || null,dueDate:task.dueDate || task.startDate});
+    if(!hasChildren && !(task.subtasks || []).length && (task.dueDate || task.startDate))result.push({...task,_lrpRealDueDate:task.dueDate || null,dueDate:task.dueDate || task.startDate});
     for(const sub of embedded)result.push({...sub,_lrpRealDueDate:sub.dueDate || null,planningDisposition:task.planningDisposition==='abandoned'?'abandoned':sub.planningDisposition,id:`${task.id}::${sub.id}`,dueDate:sub.dueDate || sub.startDate,status:sub.completed?'Completed':'Not Started',priority:sub.priority || 'Medium',tags:sub.tags || [],_lrpOwnerId:task.id,_lrpSubId:sub.id});
   }
   return result.sort((a,b)=>Number(Boolean(b._lrpSubId || b.parentId))-Number(Boolean(a._lrpSubId || a.parentId)));
@@ -12507,21 +12980,67 @@ async function updateLrpCalendarTask(store,task,partial) {
   store.refresh();
 }
 function getLrpPreviewPosition(anchor,width,height,viewportWidth,viewportHeight) {
-  const margin=12,gap=14;
-  const maxWidth=Math.max(80,viewportWidth-margin*2);
-  width=Math.min(width,maxWidth);
+  const margin=12,gap=14,bottom=Math.min(48,Math.max(12,viewportHeight/5));
+  width=Math.min(width,Math.max(1,viewportWidth-margin*2));
+  const available=Math.max(1,viewportHeight-margin-bottom);
   const candidates=[
-    {left:anchor.right+gap,top:anchor.top,space:viewportWidth-anchor.right-gap-margin,widthSide:true},
-    {left:anchor.left-gap-width,top:anchor.top,space:anchor.left-gap-margin,widthSide:true},
-    {left:anchor.left,top:anchor.bottom+gap,space:viewportHeight-anchor.bottom-gap-margin},
-    {left:anchor.left,top:margin,space:anchor.top-gap-margin}
+    {left:anchor.right+gap,top:anchor.top,space:viewportWidth-anchor.right-gap-margin,side:true},
+    {left:anchor.left-gap-width,top:anchor.top,space:anchor.left-gap-margin,side:true},
+    {left:anchor.left,top:anchor.bottom+gap,space:Math.max(0,viewportHeight-bottom-anchor.bottom-gap)},
+    {left:anchor.left,top:margin,space:Math.max(0,anchor.top-gap-margin),above:true}
   ];
-  const side=candidates.filter(c=>c.widthSide && c.space>=width).sort((a,b)=>b.space-a.space)[0];
-  const choice=side || candidates.filter(c=>!c.widthSide).sort((a,b)=>b.space-a.space)[0];
-  const maxHeight=side ? viewportHeight-margin*2 : Math.max(60,choice.space);
-  height=Math.min(height,maxHeight);
-  if(!side && choice===candidates[3])choice.top=anchor.top-gap-height;
-  return {left:Math.max(margin,Math.min(choice.left,viewportWidth-width-margin)),top:Math.max(margin,Math.min(choice.top,viewportHeight-height-margin)),width,maxHeight};
+  const side=candidates.filter(item=>item.side && item.space>=width).sort((a,b)=>b.space-a.space)[0];
+  const choice=side || candidates.filter(item=>!item.side).sort((a,b)=>b.space-a.space)[0];
+  const maxHeight=Math.min(available,side?available:Math.max(1,choice.space));
+  const shown=Math.min(Math.max(1,height),maxHeight);
+  const top=choice.above?anchor.top-gap-shown:choice.top;
+  return {left:Math.max(margin,Math.min(choice.left,viewportWidth-width-margin)),top:Math.max(margin,Math.min(top,viewportHeight-bottom-shown)),width,maxHeight};
+}
+function getLrpPreviewTaskContext(target) {
+  const {tasks,owner,task,embedded}=target;
+  const parent=embedded ? owner : tasks.find(item=>item.id===task.parentId);
+  const large=parent || task;
+  const children=[
+    ...tasks.filter(child=>child.parentId===large.id).map(child=>({task:child,embedded:false,current:!embedded && child.id===task.id})),
+    ...(large.subtasks || []).map(child=>({task:child,embedded:true,current:embedded && owner.id===large.id && child.id===task.id}))
+  ];
+  return {large,children,progress:calculateLrpProgress(large,tasks)};
+}
+function renderLrpPreviewTaskContext(panel,plugin,target) {
+  const context=getLrpPreviewTaskContext(target);
+  panel.createDiv({text:`所属任务：${context.large.title}`,cls:'lrp-preview-relation'});
+  if(context.children.length){
+    const list=panel.createEl('ul',{cls:'lrp-preview-context-list',attr:{'aria-label':'所属任务的子任务'}});
+    for(const entry of context.children){
+      const completed=isLrpTaskComplete(entry.task,entry.embedded?[]:target.tasks);
+      const row=list.createEl('li',{cls:`lrp-preview-context-row${entry.current?' is-current':''}`});
+      if(entry.current)row.setAttribute('aria-current','true');
+      row.createSpan({cls:'lrp-task-first-line-check'}).createSpan({text:completed?'✓':'□',cls:`lrp-preview-context-state${completed?' is-complete':''}`,attr:{'aria-label':completed?'已完成':'未完成'}});
+      row.createSpan({text:entry.task.title,cls:'lrp-preview-context-title'});
+    }
+  }
+  const progress=panel.createDiv('lrp-preview-parent-progress');
+  renderLrpProgressBar(progress,context.progress);
+}
+function renderLrpPreviewDescription(panel,plugin,reference,task,onEditing,onDone,onLayout) {
+  const heading=panel.createDiv('lrp-preview-description-heading');
+  heading.createEl('h4',{text:'说明'});
+  const edit=heading.createEl('button',{text:'编辑',attr:{type:'button'}});
+  const body=panel.createDiv({text:task.description || '无',cls:'lrp-preview-description-body'});
+  const form=panel.createEl('form',{cls:'lrp-preview-description-form'});form.hidden=true;
+  const input=form.createEl('textarea',{attr:{rows:'5','aria-label':'任务说明',placeholder:'添加说明…'}});input.value=task.description || '';
+  const feedback=form.createDiv({cls:'lrp-preview-feedback',attr:{role:'alert'}});
+  const actions=form.createDiv('lrp-preview-description-actions');
+  const cancel=actions.createEl('button',{text:'取消',attr:{type:'button'}});
+  const save=actions.createEl('button',{text:'保存',attr:{type:'submit'}});
+  edit.onclick=()=>{onEditing(true);body.hidden=true;edit.hidden=true;form.hidden=false;onLayout();input.focus?.({preventScroll:true});};
+  cancel.onclick=()=>{if(save.disabled)return;onEditing(false);onDone();};
+  form.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();cancel.onclick();}};
+  form.onsubmit=async event=>{
+    event.preventDefault();if(save.disabled)return;save.disabled=true;cancel.disabled=true;feedback.textContent='';
+    try{await updateLrpCalendarTask(plugin.taskStore,reference,{description:input.value});onEditing(false);onDone();}
+    catch(problem){feedback.textContent='保存失败，请重试';save.disabled=false;cancel.disabled=false;console.error(problem);}
+  };
 }
 function openLrpTaskPreview(plugin,reference,anchorElement) {
   plugin.lrpClosePreview?.();
@@ -12530,20 +13049,23 @@ function openLrpTaskPreview(plugin,reference,anchorElement) {
   const panel=doc.body.createDiv('lrp-task-preview');
   panel.setAttribute('role','dialog');panel.setAttribute('aria-label','任务信息');
   const anchor=anchorElement?.getBoundingClientRect?.() || plugin.lrpPreviewAnchor || {left:win.innerWidth/2,right:win.innerWidth/2,top:80,bottom:80};
-  let dirty=false,unsubscribe;
+  let editingDescription=false,unsubscribe;
   const close=()=>{unsubscribe?.();panel.remove();doc.removeEventListener('pointerdown',outside,true);doc.removeEventListener('keydown',escape,true);win.removeEventListener('resize',position);if(plugin.lrpClosePreview===close)plugin.lrpClosePreview=null;};
-  const outside=event=>{if(!panel.contains(event.target))close();};
-  const escape=event=>{if(event.key==='Escape')close();};
+  const outside=event=>{if(!editingDescription && !panel.contains(event.target))close();};
+  const escape=event=>{if(event.key==='Escape' && !editingDescription)close();};
   const position=()=>{
-    const placement=getLrpPreviewPosition(anchor,380,panel.scrollHeight,win.innerWidth,win.innerHeight);
-    Object.assign(panel.style,{left:`${placement.left}px`,top:`${placement.top}px`,width:`${placement.width}px`,maxHeight:`${placement.maxHeight}px`});
+    // Measure after applying the final width: wrapping changes the popup's height.
+    const width=Math.min(380,Math.max(1,win.innerWidth-24));panel.style.width=`${width}px`;
+    const placement=getLrpPreviewPosition(anchor,width,panel.scrollHeight+2,win.innerWidth,win.innerHeight);
+    Object.assign(panel.style,{left:`${placement.left}px`,top:`${placement.top}px`,maxHeight:`${placement.maxHeight}px`});
   };
   const render=()=>{
-    if(dirty)return;
+    if(editingDescription)return;
     const target=getLrpTaskTarget(plugin,reference);
     panel.empty();
     if(!target){panel.createDiv({text:'任务已不存在'});return;}
     const {project,tasks,owner,task,embedded}=target;
+    panel.style.setProperty('--lrp-project-color',project.calendarColor || '#9874b5');
     const header=panel.createDiv('lrp-preview-header');
     header.createSpan({text:project.name,cls:'lrp-preview-project'});
     header.createEl('button',{text:'×',attr:{'aria-label':'关闭'}}).onclick=close;
@@ -12553,31 +13075,14 @@ function openLrpTaskPreview(plugin,reference,anchorElement) {
     renderLrpTaskStatus(chips,plugin,embedded && owner.planningDisposition==='abandoned'?{...task,planningDisposition:'abandoned'}:task,tasks);
     chip(`优先级：${lrpText(task.priority || 'Medium')}`);
     chip(project.buckets?.find(bucket=>bucket.id===(task.bucketId || owner.bucketId))?.name || '未分组');
-    for(const id of task.tags || []){
+    for(const id of getLrpTaskTagIds(plugin.settings,task,project.id)){
       const tag=plugin.settings.availableTags?.find(tag=>tag.id===id);
       if(tag){const label=chip(tag.name);label.style.backgroundColor=tag.color;label.style.color='#000';}
     }
-    const pct=embedded ? task.completed?100:0 : calculateLrpProgress(task,tasks);
-    renderLrpProgressBar(panel,pct);
     const dates=panel.createDiv('lrp-preview-dates');
     dates.textContent=`${task.startDate || '未设开始时间'} → ${task.dueDate || '未设截止时间'} · ${formatLrpWeek(task.dueDate || '')}`;
-    const parent=embedded ? owner : tasks.find(item=>item.id===task.parentId);
-    if(parent)panel.createDiv({text:`所属任务：${parent.title}`,cls:'lrp-preview-relation'});
-    const children=embedded ? [] : [...tasks.filter(child=>child.parentId===task.id),...(task.subtasks || [])];
-    if(children.length){
-      panel.createEl('h4',{text:'子任务'});
-      for(const child of children)panel.createDiv({text:`${child.completed?'✓':'○'} ${child.title} · ${child.dueDate || child.startDate || '未安排时间'} · ${lrpText(child.priority || 'Medium')}`,cls:'lrp-preview-child'});
-    }
-    panel.createEl('h4',{text:'说明'});
-    const description=panel.createEl('textarea',{attr:{'aria-label':'任务说明',placeholder:'添加说明…'}});description.value=task.description || '';
-    description.oninput=()=>{dirty=true;};
-    const feedback=panel.createDiv('lrp-preview-feedback');
-    const save=panel.createEl('button',{text:'保存说明'});
-    save.onclick=async()=>{
-      save.disabled=true;
-      try{await updateLrpCalendarTask(plugin.taskStore,reference,{description:description.value});dirty=false;render();}
-      catch(error){feedback.textContent='保存失败，请重试';console.error(error);save.disabled=false;}
-    };
+    renderLrpPreviewTaskContext(panel,plugin,target);
+    renderLrpPreviewDescription(panel,plugin,reference,task,value=>{editingDescription=value;},render,position);
     position();
   };
   plugin.lrpClosePreview=close;
@@ -12585,7 +13090,26 @@ function openLrpTaskPreview(plugin,reference,anchorElement) {
   doc.addEventListener('pointerdown',outside,true);doc.addEventListener('keydown',escape,true);win.addEventListener('resize',position);
 }
 
+function bindLrpBoardSubtaskPreview(label,plugin,owner,subtask) {
+  label.setAttribute('role','button');label.setAttribute('tabindex','0');
+  label.setAttribute('aria-label',`查看子任务 ${subtask.title}`);
+  const open=event=>{
+    event.preventDefault();event.stopPropagation();
+    return plugin.openTaskDetail({...subtask,id:`${owner.id}::${subtask.id}`,_lrpOwnerId:owner.id,_lrpSubId:subtask.id},{anchor:label});
+  };
+  label.onclick=open;
+  label.onkeydown=event=>{if(event.key==='Enter' || event.key===' ')return open(event);};
+}
 
+
+function getLrpTimelineWeekScroll(first,today,dayWidth) {
+  const monday=today-((new Date(today).getUTCDay()+6)%7)*86400000;
+  return Math.max(0,(monday-first)/86400000*dayWidth);
+}
+function focusLrpTimelineCurrentWeek(view) {
+  view.lrpTimelineLocateCurrent=true;
+  if(view.lrpTimelineReady)return view.render();
+}
 function getLrpSoftTimelineColor(value) {
   const color=String(value || '#ddd5e7');
   if(LRP_BUCKET_PALETTE.includes(color.toLowerCase()))return color;
@@ -12646,6 +13170,8 @@ async function renderLrpTimelineV2(view) {
   const controls=wrapper.createDiv('lrp-time-controls');
   const state=view.lrpTimelineState || (view.lrpTimelineState={dayWidth:18,scroll:0,collapsed:new Set(),scope:null});
   const scope=all?'all':plugin.settings.activeProjectId;
+  const locateCurrent=Boolean(view.lrpTimelineLocateCurrent || state.scope!==scope);
+  view.lrpTimelineLocateCurrent=false;
   if(state.scope!==scope){state.scroll=0;state.scope=scope;state.collapsed=new Set();state.seen=new Set();state.first=null;state.days=null;state.mode="hierarchy";}
   const tree=getLrpTimelineTree(plugin,all);
   state.seen=state.seen || new Set();
@@ -12653,8 +13179,16 @@ async function renderLrpTimelineV2(view) {
   const dates=tree.flatMap(node=>[node.start,node.end]).filter(value=>value!==null);
   const today=Date.parse(toDateStr(new Date()));
   const min=dates.length?Math.min(...dates):today,max=dates.length?Math.max(...dates):today+28*86400000;
-  let first=state.first ?? (min-((new Date(min).getUTCDay()+6)%7)*86400000-28*86400000);
-  let days=state.days || Math.max(70,Math.ceil((max-first)/86400000)+29);
+  const origin=Math.min(min,today);
+  let first=state.first ?? (origin-((new Date(origin).getUTCDay()+6)%7)*86400000-28*86400000);
+  let days=state.days || Math.max(70,Math.ceil((Math.max(max,today+28*86400000)-first)/86400000)+29);
+  if(locateCurrent){
+    const monday=today-((new Date(today).getUTCDay()+6)%7)*86400000;
+    if(first>monday)first=monday-28*86400000;
+    days=Math.max(days,Math.ceil((monday-first)/86400000)+35);
+    state.scroll=getLrpTimelineWeekScroll(first,today,state.dayWidth);
+  }
+  state.first=first;state.days=days;
   const minus=controls.createEl('button',{text:'−',attr:{'aria-label':'缩小时间比例'}});
   const zoom=controls.createEl('input',{attr:{type:'range',min:'5',max:'48',step:'1','aria-label':'时间比例'}});zoom.value=String(state.dayWidth);
   const plus=controls.createEl('button',{text:'＋',attr:{'aria-label':'放大时间比例'}});
@@ -12665,6 +13199,11 @@ async function renderLrpTimelineV2(view) {
   if(state.mode==='subtasks')state.mode='weeks-tasks';
   mode.value=state.mode || 'hierarchy';mode.hidden=all;
   const scroll=wrapper.createDiv('lrp-time-scroll');
+  if(locateCurrent){
+    const currentDay=getLrpTimelineWeekScroll(first,today,1);
+    const visibleDays=Math.ceil(Math.max(1400,scroll.clientWidth-240)/state.dayWidth);
+    days=Math.max(days,currentDay+visibleDays+14);state.days=days;
+  }
   const grid=scroll.createDiv('lrp-time-grid');
   const header=grid.createDiv({text:all?'项目':(plugin.settings.projects || []).find(project=>project.id===plugin.settings.activeProjectId)?.name || '项目',cls:'lrp-time-label lrp-time-corner'});
   const axis=grid.createDiv('lrp-time-axis');
@@ -12778,16 +13317,18 @@ async function renderLrpTimelineV2(view) {
   };
   minus.onclick=()=>resizeZoom(state.dayWidth-3);plus.onclick=()=>resizeZoom(state.dayWidth+3);zoom.oninput=()=>resizeZoom(zoom.value);
   scroll.addEventListener('wheel',event=>{if(event.ctrlKey || event.metaKey){event.preventDefault();resizeZoom(state.dayWidth+(event.deltaY<0?2:-2));}},{passive:false});
-  now.onclick=()=>{scroll.scrollLeft=Math.max(0,(today-first)/86400000*state.dayWidth-100);drawRows();};
+  now.onclick=()=>{scroll.scrollLeft=getLrpTimelineWeekScroll(first,today,state.dayWidth);state.scroll=scroll.scrollLeft;drawRows();};
   buildAxis();
-  requestAnimationFrame(()=>{if(generation!==view.lrpTimelineGeneration)return;scroll.scrollLeft=state.scroll;drawRows();});
+  requestAnimationFrame(()=>{if(generation!==view.lrpTimelineGeneration)return;scroll.scrollLeft=state.scroll;state.scroll=scroll.scrollLeft;drawRows();});
   // Resize filtering uses current pixel bounds without rebuilding the user's expanded tree.
   view.lrpTimeResize?.disconnect();
   if(typeof ResizeObserver!=='undefined'){view.lrpTimeResize=new ResizeObserver(drawRows);view.lrpTimeResize.observe(scroll);}
 }
 GanttView.prototype.render=function(){return renderLrpTimelineV2(this);};
+const lrpTimelineOpen=GanttView.prototype.onOpen;
+GanttView.prototype.onOpen=async function(...args){this.lrpTimelineLocateCurrent=true;this.lrpTimelineReady=false;await lrpTimelineOpen.apply(this,args);this.lrpTimelineReady=true;};
 const lrpTimelineClose=GanttView.prototype.onClose;
-GanttView.prototype.onClose=async function(...args){this.lrpTimelineGeneration=(this.lrpTimelineGeneration || 0)+1;this.lrpTimeResize?.disconnect();return lrpTimelineClose.apply(this,args);};
+GanttView.prototype.onClose=async function(...args){this.lrpTimelineReady=false;this.lrpTimelineGeneration=(this.lrpTimelineGeneration || 0)+1;this.lrpTimeResize?.disconnect();return lrpTimelineClose.apply(this,args);};
 
 
 function getLrpDayEntries(plugin,date) {
@@ -12820,7 +13361,7 @@ class LrpDayTasksModal extends obsidian.Modal {
       const tags=card.createDiv('lrp-preview-chips');
       renderLrpTaskStatus(tags,this.plugin,task);
       tags.createSpan({text:`优先级：${lrpText(task.priority || 'Medium')}`,cls:'lrp-preview-chip'});
-      for(const id of task.tags || []){
+      for(const id of getLrpTaskTagIds(this.plugin.settings,task,project.id)){
         const tag=this.plugin.settings.availableTags?.find(tag=>tag.id===id);
         if(tag){const badge=tags.createSpan({text:tag.name,cls:'lrp-preview-chip'});badge.style.backgroundColor=tag.color;badge.style.color='#000';}
       }
@@ -12855,7 +13396,7 @@ function refreshLrpHiddenProjectFolders(plugin) {
 
 
 // Project-local, deterministic dependency layout. No task dates or dependency data are changed.
-function getLrpDependencyLayout(tasks) {
+function getLrpDependencyLayout(tasks,options={}) {
   const byId=new Map(tasks.map(task=>[task.id,task]));
   const edges=[];
   for(const task of tasks)for(const dep of task.dependencies || []){
@@ -12876,35 +13417,69 @@ function getLrpDependencyLayout(tasks) {
     }
   }
   // Existing cycles remain visible and never enter a force simulation or an endless loop.
-  const lanes=new Map();
   for(const node of nodes){
     node.cyclic=!visited.has(node.id);
-    const lane=lanes.get(node.level) || 0;lanes.set(node.level,lane+1);
-    Object.assign(node,{x:24+node.level*320,y:24+lane*108,width:208,height:80});
+    const units=[...String(node.task.title || '')].reduce((sum,char)=>sum+(char.codePointAt(0)>255?2:1),0);
+    Object.assign(node,{width:208,height:Math.max(80,52+24*Math.max(1,Math.ceil(units/22)))});
   }
-  return {nodes,edges,width:Math.max(480,...nodes.map(node=>node.x+node.width+24)),height:Math.max(140,...nodes.map(node=>node.y+node.height+24))};
+  const columns=Math.max(2,Math.min(4,Number(options.columns) || 4));
+  return {nodes,edges,columns,...placeLrpDependencyNodes(nodes,columns)};
+}
+function placeLrpDependencyNodes(nodes,columns) {
+  const pad=56,pitch=320,laneGap=52,turnGap=100;
+  const bands=new Map();
+  for(const node of nodes){
+    const band=Math.floor(node.level/columns);
+    if(!bands.has(band))bands.set(band,[]);bands.get(band).push(node);
+  }
+  let top=pad;
+  for(const [band,members] of [...bands].sort((a,b)=>a[0]-b[0])){
+    const levels=new Map();let bottom=top;
+    for(const node of members){
+      const column=band%2?columns-1-node.level%columns:node.level%columns;
+      const y=levels.get(node.level) || top;
+      Object.assign(node,{band,bandTop:top,x:pad+column*pitch,y});
+      levels.set(node.level,y+node.height+laneGap);bottom=Math.max(bottom,y+node.height);
+    }
+    for(const node of members)node.bandBottom=bottom;
+    top=bottom+turnGap;
+  }
+  return {width:Math.max(480,...nodes.map(node=>node.x+node.width+pad)),height:Math.max(140,...nodes.map(node=>node.y+node.height+pad))};
 }
 function matchesLrpDependencyProject(plugin,tasks,filter,now=new Date()) {
   return matchesLrpProjectStatus(plugin,tasks,filter,now);
 }
-function getLrpDependencyPath(source,target) {
-  const sx=source.x+source.width,sy=source.y+source.height/2;
-  const tx=target.x,ty=target.y+target.height/2;
-  const bend=Math.max(36,Math.abs(tx-sx)/2);
-  return `M ${sx} ${sy} C ${sx+bend} ${sy}, ${tx-bend} ${ty}, ${tx} ${ty}`;
+function getLrpDependencyConnection(source,target) {
+  const differentBand=source.band!==target.band;
+  const skip=!differentBand && Math.abs(source.level-target.level)>1;
+  if(differentBand || source.x===target.x){
+    const sx=source.x+source.width/2,sy=source.y+source.height,tx=target.x+target.width/2,ty=target.y;
+    const gutter=source.x>=target.x?Math.max(source.x+source.width,target.x+target.width)+36:Math.min(source.x,target.x)-36;
+    return {path:`M ${sx} ${sy} L ${sx} ${sy+30} L ${gutter} ${sy+30} L ${gutter} ${ty-30} L ${tx} ${ty-30} L ${tx} ${ty}`,x:tx,y:ty,dx:0,dy:1,labelX:(sx+gutter)/2,labelY:sy+23};
+  }
+  if(skip){
+    const sx=source.x+source.width/2,tx=target.x+target.width/2,y=Math.min(source.bandTop ?? source.y,target.bandTop ?? target.y)-28;
+    return {path:`M ${sx} ${source.y} L ${sx} ${y} L ${tx} ${y} L ${tx} ${target.y}`,x:tx,y:target.y,dx:0,dy:1,labelX:(sx+tx)/2,labelY:y-7};
+  }
+  const direction=target.x>source.x?1:-1;
+  const sx=direction>0?source.x+source.width:source.x,sy=source.y+source.height/2;
+  const tx=direction>0?target.x:target.x+target.width,ty=target.y+target.height/2;
+  const bend=Math.max(24,Math.abs(tx-sx)/2);
+  return {path:`M ${sx} ${sy} C ${sx+direction*bend} ${sy}, ${tx-direction*bend} ${ty}, ${tx} ${ty}`,x:tx,y:ty,dx:direction,dy:0,labelX:(sx+tx)/2,labelY:(sy+ty)/2-9};
 }
+function getLrpDependencyPath(source,target) {return getLrpDependencyConnection(source,target).path;}
 DependencyGraphView.prototype.onOpen=async function(){
   this.closed=false;
   const container=this.containerEl;container.empty();container.addClass('planner-graph-wrapper','lrp-dependency-view');
   renderPlannerHeader(container,this.plugin,{active:'graph',onProjectChange:()=>this.onLrpProjectScopeChange()});
   const toolbar=container.createDiv('lrp-dependency-toolbar');
   const heading=toolbar.createDiv();heading.createEl('h3',{text:'任务依赖'});
-  heading.createEl('p',{text:'从左向右查看前后关系 · 点击卡片查看任务，拖动卡片调整位置'});
+  heading.createEl('p',{text:'沿箭头分行查看依赖 · 点击任务查看详情，拖动卡片调整位置'});
   const actions=toolbar.createDiv('lrp-dependency-actions');
   actions.createEl('button',{text:'刷新'}).onclick=()=>this.refresh();
   actions.createEl('button',{text:'重排节点'}).onclick=()=>this.resetLayout();
   this.lrpDependencyRecords=[];
-  this.projectFinder=this.plugin.settings.showAllProjects ? createLrpProjectFinder(container,this,this.lrpDependencyRecords,'lrpDependency') : null;
+  this.projectFinder=this.plugin.settings.showAllProjects ? createLrpProjectFinder(container,this,this.lrpDependencyRecords,'lrpDependency',{onDeleted:()=>this.refresh()}) : null;
   this.graphContent=this.projectFinder ? this.projectFinder.content : container.createDiv('lrp-dependency-content');
   this.graphContent.classList.add('lrp-dependency-content');
   await this.plugin.taskStore.ensureLoaded();
@@ -12922,9 +13497,11 @@ DependencyGraphView.prototype.refresh=async function(){
   let count=0;
   for(const project of projects){
     const tasks=this.plugin.taskStore.getAllForProject(project.id) || [];
-    const layout=getLrpDependencyLayout(tasks);
+    const fullWidth=this.containerEl?.ownerDocument?.defaultView?.innerWidth || 1360;
+    const columns=Math.max(2,Math.min(4,Math.floor((fullWidth-80-(this.plugin.settings.showAllProjects?240:0))/320)));
+    const layout=getLrpDependencyLayout(tasks,{columns});
     count++;
-    const section=content.createDiv('lrp-dependency-project');
+    const section=content.createDiv({cls:'lrp-dependency-project',attr:{'data-project-id':project.id}});
     section.style.setProperty('--lrp-dependency-color',getLrpSoftTimelineColor(project.calendarColor));
     this.lrpDependencyRecords?.push({project,section});
     const header=section.createDiv('lrp-dependency-project-header');
@@ -12932,6 +13509,7 @@ DependencyGraphView.prototype.refresh=async function(){
     header.ondblclick=event=>{event.preventDefault();event.stopPropagation();void openLrpProjectFromHeading(this,project.id).catch(error=>{new obsidian.Notice('打开项目失败，请重试');console.error(error);});};
     header.createEl('h4',{text:project.name});
     header.createSpan({text:`${layout.nodes.length} 个任务 · ${layout.edges.length} 条关系`});
+    addLrpProjectEditButton(header,this.plugin,project,()=>this.onLrpProjectScopeChange());
     const scroller=section.createDiv('lrp-dependency-scroll');
     const stage=scroller.createDiv('lrp-dependency-stage');
     stage.style.width=`${layout.width}px`;stage.style.height=`${layout.height}px`;
@@ -12951,16 +13529,20 @@ DependencyGraphView.prototype.refresh=async function(){
     const updateEdges=()=>{
       for(const edge of edges){
         const source=nodeMap.get(edge.source),target=nodeMap.get(edge.target);
-        edge.path.setAttribute('d',getLrpDependencyPath(source,target));
-        const x=target.x,y=target.y+target.height/2;
-        edge.arrow.setAttribute('d',`M ${x-7} ${y-4} L ${x} ${y} L ${x-7} ${y+4} Z`);
-        edge.label.setAttribute('x',String((source.x+source.width+target.x)/2));
-        edge.label.setAttribute('y',String((source.y+source.height/2+target.y+target.height/2)/2-9));
+        const route=getLrpDependencyConnection(source,target);
+        edge.path.setAttribute('d',route.path);
+        const bx=route.x-route.dx*8,by=route.y-route.dy*8;
+        edge.arrow.setAttribute('d',`M ${bx-route.dy*4} ${by+route.dx*4} L ${route.x} ${route.y} L ${bx+route.dy*4} ${by-route.dx*4} Z`);
+        edge.label.setAttribute('x',String(route.labelX));
+        edge.label.setAttribute('y',String(route.labelY));
       }
     };
+    const cards=[];
     for(const node of layout.nodes){
       const card=stage.createEl('button',{cls:'lrp-dependency-card',attr:{type:'button',title:node.task.title}});
+      card.style.width=`${node.width}px`;card.style.minHeight=`${node.height}px`;
       const position=()=>{card.style.left=`${node.x}px`;card.style.top=`${node.y}px`;};position();
+      cards.push({card,node,position});
       const title=card.createEl('strong',{text:node.task.title});
       const meta=card.createDiv('lrp-dependency-card-meta');
       const status=getLrpTaskDisplayStatus(this.plugin,node.task,tasks);
@@ -12986,6 +13568,10 @@ DependencyGraphView.prototype.refresh=async function(){
       const endDrag=()=>{drag=null;this.dragNode=null;card.classList.remove('is-dragging');if(this.needsRefresh)this.refresh();};
       card.onpointerup=endDrag;card.onpointercancel=endDrag;card.onlostpointercapture=endDrag;
     }
+    // Full titles can wrap: measure rendered cards and restack before drawing arrows.
+    let measured=false;
+    for(const {card,node} of cards){const height=card.getBoundingClientRect?.().height || 0;if(height>node.height){node.height=Math.ceil(height);measured=true;}}
+    if(measured){Object.assign(layout,placeLrpDependencyNodes(layout.nodes,layout.columns));for(const entry of cards)entry.position();stage.style.width=`${layout.width}px`;stage.style.height=`${layout.height}px`;}
     if(!layout.nodes.length)stage.createDiv({text:'此项目暂无任务',cls:'lrp-dependency-empty-project'});
     updateEdges();
   }
@@ -13004,6 +13590,1124 @@ DependencyGraphView.prototype.onLrpProjectScopeChange=async function(){
   await this.plugin.taskStore.load();
   await this.lrpRenderProjectScope();
 };
+
+function getLrpScoringSettings(project) {
+    const value = project?.scoring || {};
+    const regularWeight = value.regularWeight ?? 60;
+    const examWeight = value.examWeight ?? 40;
+    const valid = [regularWeight,examWeight].every(weight => typeof weight === 'number' && Number.isFinite(weight) && weight >= 0 && weight <= 100) && Math.abs(regularWeight + examWeight - 100) < 0.000001;
+    return {regularBasis:value.regularBasis === 'task' ? 'task' : 'subtask',enabled:value.enabled === true,regularWeight:valid?regularWeight:60,examWeight:valid?examWeight:40};
+}
+function validateLrpScoringSettings(value) {
+    if (value.regularWeight === '' || value.examWeight === '') throw new Error('请填写平时分和考验分占比。');
+    const regularWeight = Number(value.regularWeight ?? 60), examWeight = Number(value.examWeight ?? 40);
+    if (![regularWeight,examWeight].every(weight => Number.isFinite(weight) && weight >= 0 && weight <= 100) || Math.abs(regularWeight + examWeight - 100) > 0.000001) throw new Error('平时分与考验分占比须在0%至100%之间，合计100%。');
+    if (value.regularBasis !== undefined && !['task','subtask'].includes(value.regularBasis)) throw new Error('请选择平时分计分对象。');
+    return {enabled:value.enabled === true,regularWeight,examWeight,regularBasis:value.regularBasis || 'subtask'};
+}
+function isLrpAssessmentTask(task,tasks) {
+    const byId=new Map(tasks.map(item=>[item.id,item])),seen=new Set();
+    while(task && !seen.has(task.id)){if(task.lrpAssessment===true)return true;seen.add(task.id);task=byId.get(task.parentId);}
+    return false;
+}
+function getLrpEntryReview(entry) {
+    const review=entry.item.reviewScore;
+    return review ? {...review,category:entry.assessment?'exam':'regular'} : review;
+}
+async function addLrpAssessmentTask(plugin,projectId,title='新考验') {
+    const root=getLrpReviewRoot(plugin),project=root.settings.projects.find(item=>item.id===projectId);
+    if(!project)throw new Error('项目不存在');
+    const task={id:crypto.randomUUID(),title,status:'Not Started',priority:'Medium',completed:false,parentId:null,lrpAssessment:true,createdDate:getTodayDate(),lastModifiedDate:getTodayDate(),subtasks:[]};
+    const store=root.taskStore,before=[...(store.getAllForProject(projectId)||[])],timestamp=project.lastUpdatedDate;
+    try{await store.addTaskToProject(task,projectId);return task;}
+    catch(error){store.tasksByProject[projectId]=before;if(store.activeProjectId===projectId)store.tasks=before;store.rebuildIndex();project.lastUpdatedDate=timestamp;throw error;}
+}
+function getLrpSubtaskReviewEntries(tasks) {
+    const entries = [];
+    const byId = new Map(tasks.map(task => [task.id,task]));
+    const parents = new Set(tasks.filter(task => task.parentId).map(task => task.parentId));
+    const excluded = task => {
+        const seen = new Set();
+        while (task && !seen.has(task.id)) {
+            if (task.planningDisposition === 'abandoned' || task.status === 'Abandoned') return true;
+            seen.add(task.id); task = byId.get(task.parentId);
+        }
+        return false;
+    };
+    for (const owner of tasks) {
+        if (excluded(owner)) continue;
+        if (owner.parentId && !parents.has(owner.id) && !owner.subtasks?.length) {
+            entries.push({key:JSON.stringify([owner.id,null]),ownerId:owner.id,subId:null,title:owner.title || '未命名子任务',parentTitle:byId.get(owner.parentId)?.title || '',completed:isLrpTaskComplete(owner,tasks),item:owner,assessment:isLrpAssessmentTask(owner,tasks)});
+        }
+        for (const sub of owner.subtasks || []) {
+            if (sub.planningDisposition === 'abandoned' || sub.status === 'Abandoned') continue;
+            entries.push({key:JSON.stringify([owner.id,sub.id]),ownerId:owner.id,subId:sub.id,title:sub.title || '未命名子任务',parentTitle:owner.title || '',completed:Boolean(sub.completed),item:sub,assessment:isLrpAssessmentTask(owner,tasks)});
+        }
+    }
+    return entries;
+}
+// Large tasks are project roots; nested leaves remain small tasks.
+function getLrpLargeReviewEntries(tasks) {
+    return tasks.filter(task => !task.parentId && task.planningDisposition !== 'abandoned' && task.status !== 'Abandoned').map(task => ({key:JSON.stringify([task.id,null]),ownerId:task.id,subId:null,title:task.title || '未命名任务',parentTitle:'',completed:isLrpTaskComplete(task,tasks),item:task,large:true,assessment:task.lrpAssessment===true}));
+}
+function getLrpReviewEntries(project,tasks) {
+    return [...getLrpSubtaskReviewEntries(tasks),...getLrpLargeReviewEntries(tasks).filter(entry=>entry.assessment || getLrpScoringSettings(project).regularBasis==='task')];
+}
+function getLrpLargeTaskScores(project,tasks) {
+    const config=getLrpScoringSettings(project), children=getLrpSubtaskReviewEntries(tasks).filter(entry=>!entry.assessment), byId=new Map(tasks.map(task=>[task.id,task]));
+    const rootId=entry=>{let task=byId.get(entry.ownerId);const seen=new Set();while(task?.parentId && !seen.has(task.id)){seen.add(task.id);task=byId.get(task.parentId);}return task?.id;};
+    const mean=items=>items.length ? items.reduce((sum,value)=>sum+value,0)/items.length : null;
+    return getLrpLargeReviewEntries(tasks).filter(entry=>!entry.assessment).map(entry=>{
+        const leaves=children.filter(child=>rootId(child)===entry.ownerId);
+        const valid=leaves.filter(child=>child.completed && isValidLrpSubtaskScore(child.item.reviewScore));
+        const regular=config.regularBasis==='task' ? (entry.completed && isValidLrpSubtaskScore(entry.item.reviewScore) && !entry.assessment ? entry.item.reviewScore.score : null) : mean(valid.map(child=>child.item.reviewScore.score));
+        const exam=mean(valid.filter(child=>child.item.reviewScore.category==='exam').map(child=>child.item.reviewScore.score));
+        return {...entry,regularAverage:regular,examAverage:exam,childAverage:mean(valid.map(child=>child.item.reviewScore.score)),pending:leaves.filter(child=>child.completed && !isValidLrpSubtaskScore(child.item.reviewScore)).length};
+    });
+}
+function isValidLrpSubtaskScore(score) {
+    return score && score.pending !== true && typeof score.score === 'number' && Number.isFinite(score.score) && score.score >= 0 && score.score <= 100 && ['regular','exam'].includes(score.category);
+}
+function getLrpProjectScores(project,tasks) {
+    const config = getLrpScoringSettings(project);
+    const entries = getLrpReviewEntries(project,tasks).filter(entry => entry.completed);
+    const regular = [], exam = [];
+    let pending = 0;
+    for (const entry of entries) {
+        const review = getLrpEntryReview(entry);
+        if (!isValidLrpSubtaskScore(review)) {if(!entry.assessment || !entry.large)pending++;continue;}
+        if (entry.assessment && !entry.large) exam.push(review.score);
+        if (!entry.assessment && Boolean(entry.large) === (config.regularBasis === 'task')) regular.push(review.score);
+    }
+    const mean = list => list.length ? list.reduce((sum,value) => sum + value,0) / list.length : null;
+    const regularAverage = mean(regular), examAverage = mean(exam);
+    const ready = (!config.regularWeight || regularAverage !== null) && (!config.examWeight || examAverage !== null);
+    const total = config.enabled && ready ? (regularAverage ?? 0)*config.regularWeight/100 + (examAverage ?? 0)*config.examWeight/100 : null;
+    return {...config,regularAverage,examAverage,total,pending,regularCount:regular.length,examCount:exam.length,entries};
+}
+function getLrpReviewRoot(plugin) { return plugin.lrpRootPlugin || plugin; }
+function resolveLrpScoreTarget(plugin,reference) {
+    const root = getLrpReviewRoot(plugin);
+    const project = (root.settings.projects || []).find(project => project.id === reference.projectId);
+    if (!project) return null;
+    const tasks = root.taskStore.getAllForProject(project.id) || [];
+    const entry = [...getLrpSubtaskReviewEntries(tasks),...getLrpLargeReviewEntries(tasks)].find(entry => entry.ownerId === reference.ownerId && entry.subId === (reference.subId ?? null));
+    return entry ? {root,project,tasks,entry} : null;
+}
+// Called before a normal TaskStore update is persisted: only newly completed leaves are marked pending.
+function prepareLrpSubtaskReviews(store,task,partial,projectId) {
+    const project = (store.plugin.settings.projects || []).find(project => project.id === projectId);
+    if (!getLrpScoringSettings(project).enabled) return [];
+    const tasks = store.tasksByProject[projectId] || store.tasks;
+    const previous = new Set(getLrpReviewEntries(project,tasks).filter(entry => entry.completed).map(entry => entry.key));
+    const preview = tasks.map(item => ({...item,...(item.id === task.id ? partial : {}),subtasks:(item.id === task.id ? partial.subtasks ?? item.subtasks : item.subtasks)?.map(sub => ({...sub}))}));
+    applyLrpProgress(preview);
+    const added = getLrpReviewEntries(project,preview).filter(entry => entry.completed && !previous.has(entry.key));
+    // Root roll-up completion also requires a fresh direct score in task mode.
+    for (const entry of added.filter(entry => entry.large && entry.ownerId !== task.id)) {
+        const root=tasks.find(item=>item.id===entry.ownerId);
+        root.reviewScore={...root.reviewScore,pending:true};
+    }
+    for (const entry of added.filter(entry => entry.ownerId === task.id)) {
+        if (entry.subId !== null) {
+            partial.subtasks = (partial.subtasks || task.subtasks || []).map(sub => sub.id === entry.subId ? {...sub,reviewScore:{...sub.reviewScore,pending:true}} : sub);
+        } else partial.reviewScore = {...task.reviewScore,pending:true};
+    }
+    return added.map(entry => ({projectId,ownerId:entry.ownerId,subId:entry.subId}));
+}
+async function saveLrpSubtaskScore(plugin,reference,draft) {
+    const target = resolveLrpScoreTarget(plugin,reference);
+    if (!target || !target.entry.completed) throw new Error('子任务已删除、放弃或恢复为未完成，请刷新后重试。');
+    if (!getLrpScoringSettings(target.project).enabled) throw new Error('此项目已关闭评分复盘。');
+    if (typeof draft.score === 'string' && !draft.score.trim() || draft.score === '' || draft.score === null || draft.score === undefined || !Number.isFinite(Number(draft.score)) || Number(draft.score) < 0 || Number(draft.score) > 100) throw new Error('请输入0至100之间的分数。');
+    if (target.entry.large && !target.entry.assessment && getLrpScoringSettings(target.project).regularBasis === 'subtask') throw new Error('平时分按小任务统计，大任务平时分自动取均分。');
+    if (draft.category !== (target.entry.assessment?'exam':'regular')) throw new Error('普通任务只计平时分，考验分请在独立考验区评分。');
+    const item = target.entry.item;
+    const had = Object.prototype.hasOwnProperty.call(item,'reviewScore'), before = item.reviewScore;
+    item.reviewScore = {score:Number(draft.score),category:draft.category,note:String(draft.note || '').trim(),updatedAt:new Date().toISOString(),pending:false};
+    try { await target.root.taskStore.writeProjectFile(target.project.id,target.tasks); }
+    catch (error) {if (had) item.reviewScore = before; else delete item.reviewScore;throw error;}
+    target.root.taskStore.refresh();
+    return item.reviewScore;
+}
+class LrpSubtaskScoreModal extends obsidian.Modal {
+    constructor(plugin,reference,onDone) {super(plugin.app);this.plugin=plugin;this.reference=reference;this.onDone=onDone;}
+    onOpen() {
+        const target = resolveLrpScoreTarget(this.plugin,this.reference);
+        if (!target || !target.entry.completed || !getLrpScoringSettings(target.project).enabled) {this.close();return;}
+        const content = this.contentEl;content.empty();
+        content.createEl('h2',{text:target.entry.large?'大任务评分与复盘':'子任务评分与复盘'});
+        content.createEl('p',{text:`${target.project.name} · ${target.entry.parentTitle}`,cls:'lrp-project-overview-placeholder'});
+        content.createEl('h3',{text:target.entry.title});
+        const form = content.createEl('form',{cls:'lrp-subtask-score-form'});
+        const categoryLabel = form.createEl('label',{text:'评分类别（由所在区域决定）'});
+        const category = categoryLabel.createEl('select',{attr:{'aria-label':'评分类别'}});
+        category.createEl('option',{text:target.entry.assessment?'考验分':'平时分',value:target.entry.assessment?'exam':'regular'});
+        category.value=target.entry.assessment?'exam':'regular';category.disabled=true;
+        form.setAttribute('data-category',category.value);
+        const scoreLabel = form.createEl('label',{text:'得分（满分100分）'});
+        const score = scoreLabel.createEl('input',{attr:{type:'number',min:'0',max:'100',step:'any',required:'true','aria-label':'子任务得分'}});
+        score.value = target.entry.item.reviewScore?.score !== undefined ? String(target.entry.item.reviewScore.score) : '';
+        const noteLabel = form.createEl('label',{text:'复盘（可选）'});
+        const note = noteLabel.createEl('textarea',{attr:{rows:'4',placeholder:'做得怎么样，下次如何改进？','aria-label':'子任务复盘'}});note.value = target.entry.item.reviewScore?.note || '';
+        const errorText = form.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});
+        const actions = form.createDiv('lrp-new-project-actions');
+        const later = actions.createEl('button',{text:'稍后评分',attr:{type:'button'}});
+        const save = actions.createEl('button',{text:'保存评分',cls:'mod-cta',attr:{type:'submit'}});
+        later.onclick = () => this.close();
+        form.onsubmit = async event => {
+            event.preventDefault();if(save.disabled)return;save.disabled=true;later.disabled=true;
+            try {await saveLrpSubtaskScore(this.plugin,this.reference,{score:score.value,category:category.value,note:note.value});this.close();}
+            catch(error) {errorText.textContent=error.message || '保存失败，请重试。';save.disabled=false;later.disabled=false;}
+        };
+        score.focus();
+    }
+    onClose() {this.contentEl.empty();const done=this.onDone;this.onDone=null;done?.();}
+}
+function enqueueLrpSubtaskReviews(plugin,references) {
+    const root = getLrpReviewRoot(plugin);
+    const queue = root.lrpScoreQueue ||= [];
+    const key = reference => JSON.stringify([reference.projectId,reference.ownerId,reference.subId ?? null]);
+    for (const reference of references) {
+        if (root.lrpActiveScoreKey !== key(reference) && !queue.some(item => key(item) === key(reference))) queue.push(reference);
+    }
+    const pump = () => {
+        if (root.lrpScoringUnloaded || root.lrpActiveScoreKey) return;
+        let reference,target;
+        while ((reference=queue.shift())) {
+            target=resolveLrpScoreTarget(root,reference);
+            if(target && target.entry.completed && getLrpScoringSettings(target.project).enabled)break;
+            target=null;
+        }
+        if(!reference || !target)return;
+        root.lrpActiveScoreKey=key(reference);
+        const done=()=>{root.lrpActiveScoreKey=null;root.lrpActiveScoreModal=null;setTimeout(pump,0);};
+        try {
+            if(typeof root.lrpReviewPrompt==='function')root.lrpReviewPrompt(reference,done);
+            else {const modal=new LrpSubtaskScoreModal(root,reference,done);root.lrpActiveScoreModal=modal;modal.open();}
+        }catch(error){console.error(error);done();}
+    };
+    pump();
+}
+function addLrpScoringSettingsEditor(form,project) {
+    const config=getLrpScoringSettings(project);
+    const section=form.createDiv('lrp-scoring-settings');
+    const label=section.createEl('label',{cls:'lrp-scoring-toggle'});
+    const enabled=label.createEl('input',{attr:{type:'checkbox'}});enabled.checked=config.enabled;
+    label.createSpan({text:'启用任务评分与复盘'});
+    const weights=section.createDiv('lrp-scoring-weights');
+    const inputs={};
+    for(const [key,title] of [['regularWeight','平时分占比'],['examWeight','考验分占比']]){
+        const field=weights.createEl('label',{text:title});
+        const input=field.createEl('input',{attr:{type:'number',min:'0',max:'100',step:'1','aria-label':title}});input.value=String(config[key]);
+        field.createSpan({text:'%'});inputs[key]=input;
+    }
+    const basisLabel=weights.createEl('label',{text:'平时分计分对象'});
+    const basis=basisLabel.createEl('select',{attr:{'aria-label':'平时分计分对象'}});
+    basis.createEl('option',{text:'小任务（大任务自动显示均分）',value:'subtask'});
+    basis.createEl('option',{text:'大任务（小任务评分仅作参考）',value:'task'});basis.value=config.regularBasis;
+    const update=()=>{basis.disabled=!enabled.checked;weights.hidden=!enabled.checked;for(const input of Object.values(inputs))input.disabled=!enabled.checked;};
+    enabled.onchange=update;update();
+    inputs.regularWeight.oninput=()=>{const value=Number(inputs.regularWeight.value);if(inputs.regularWeight.value!=='' && Number.isFinite(value) && value>=0 && value<=100)inputs.examWeight.value=String(100-value);};
+    inputs.examWeight.oninput=()=>{const value=Number(inputs.examWeight.value);if(inputs.examWeight.value!=='' && Number.isFinite(value) && value>=0 && value<=100)inputs.regularWeight.value=String(100-value);};
+    section.createEl('p',{text:'平时分可按小任务或大任务计分；按小任务时大任务自动显示均分，按大任务时只统计大任务平时分，小任务仍可评分作参考。普通任务均为平时分；考验分仅统计独立考验区的小任务，考验大任务评分仅作参考。切换或关闭均保留已有评分。',cls:'lrp-project-overview-placeholder'});
+    return ()=>enabled.checked ? {enabled:true,regularWeight:inputs.regularWeight.value,examWeight:inputs.examWeight.value,regularBasis:basis.value} : {...config,enabled:false};
+}
+function renderLrpProjectScores(parent,plugin,project) {
+    if(!getLrpScoringSettings(project).enabled)return;
+    const root=getLrpReviewRoot(plugin),tasks=root.taskStore.getAllForProject(project.id) || [];
+    const scores=getLrpProjectScores(project,tasks);
+    const section=parent.createDiv('lrp-project-score-section');section.createEl('h4',{text:'打分复盘'});
+    const stats=section.createDiv('lrp-project-score-stats');
+    const format=value=>value===null?'待评分':`${Number(value.toFixed(2))} 分`;
+    stats.createSpan({text:`平时分（${scores.regularWeight}%）：${format(scores.regularAverage)} · ${scores.regularCount}项`});
+    stats.createSpan({text:`考验分（${scores.examWeight}%）：${format(scores.examAverage)} · ${scores.examCount}项`});
+    stats.createEl('strong',{text:`${scores.pending?'当前加权分':'加权总分'}：${format(scores.total)}`});
+    section.createEl('p',{text:`已完成任务待评分：${scores.pending} 项。平时分按${scores.regularBasis==='task'?'大任务':'小任务'}计分，考验分按小任务计分。未评分不按0分计算；未完成及已放弃记录不计分。`,cls:'lrp-project-overview-placeholder'});
+    renderLrpLargeScoreRows(section,plugin,project,tasks,false);
+    if(!scores.entries.length){section.createEl('p',{text:'完成可评分的任务后会自动弹出评分窗口。'});return;}
+    const history=section.createEl('details',{cls:'lrp-score-history'});history.createEl('summary',{text:'任务评分记录与补评'});
+    const list=history.createDiv('lrp-score-history-list');
+    for(const entry of scores.entries){
+        const row=list.createDiv('lrp-score-history-row'),review=getLrpEntryReview(entry);
+        row.createEl('strong',{text:`${entry.large?'大任务 · ':''}${entry.title}`});
+        if(entry.parentTitle)row.createSpan({text:entry.parentTitle,cls:'lrp-project-overview-placeholder'});
+        row.createSpan({text:isValidLrpSubtaskScore(review)?`${review.category==='regular'?'平时分':'考验分'} · ${review.score} 分${!entry.large && review.category==='regular' && scores.regularBasis==='task'?'（仅作参考，不计总分）':''}`:'待评分'});
+        if(review?.note)row.createEl('p',{text:review.note});
+        const button=row.createEl('button',{text:isValidLrpSubtaskScore(review)?'修改评分':'评分',attr:{type:'button'}});
+        button.onclick=event=>{event.stopPropagation();enqueueLrpSubtaskReviews(root,[{projectId:project.id,ownerId:entry.ownerId,subId:entry.subId}]);};
+    }
+}
+
+function renderLrpLargeScoreRows(parent,plugin,project,tasks) {
+    const sections=parent.createDiv('lrp-score-lists');
+    const regular=getLrpLargeTaskScores(project,tasks).filter(entry=>entry.regularAverage!==null).map(entry=>({title:entry.title,value:entry.regularAverage}));
+    const exam=getLrpSubtaskReviewEntries(tasks).filter(entry=>entry.assessment && entry.completed && isValidLrpSubtaskScore(entry.item.reviewScore)).map(entry=>({title:`${entry.parentTitle} · ${entry.title}`,value:entry.item.reviewScore.score}));
+    for(const [category,title,rows] of [['regular','平时 · 大任务',regular],['exam','考验 · 小任务',exam]]){
+        if(!rows.length)continue;
+        const list=sections.createDiv(`lrp-score-category-list is-${category}`);list.createEl('h4',{text:title});
+        for(const entry of rows){
+            const row=list.createDiv('lrp-score-list-row');row.createSpan({text:entry.title,attr:{title:entry.title}});
+            row.createEl('progress',{attr:{max:'100',value:String(entry.value),'aria-label':`${entry.title} ${title} ${entry.value}`}});
+            row.createEl('strong',{text:String(Number(entry.value.toFixed(2)))});
+        }
+    }
+}
+function renderLrpScoreAnalysis(parent,plugin,project,tasks) {
+    if(!getLrpScoringSettings(project).enabled)return;
+    const scores=getLrpProjectScores(project,tasks);
+    if(!scores.entries.some(entry=>isValidLrpSubtaskScore(entry.item.reviewScore)))return;
+    const section=parent.createDiv('lrp-score-analysis');
+    const heading=section.createDiv('lrp-score-analysis-heading');heading.createEl('h3',{text:'评分分析'});
+    heading.createSpan({text:`平时 ${scores.regularWeight}% · 考验 ${scores.examWeight}%${scores.pending?` · ${scores.pending}项待评`:''}`,cls:'lrp-project-overview-placeholder'});
+    const stats=section.createDiv('lrp-score-metrics');
+    for(const [title,value,category] of [[scores.pending?'当前加权分':'加权总分',scores.total,'total'],['平时均分',scores.regularAverage,'regular'],['考验均分',scores.examAverage,'exam']]){
+        const metric=stats.createEl('button',{cls:`lrp-score-metric is-${category}`,attr:{type:'button'}});
+        metric.onclick=event=>{event.stopPropagation();new LrpScoreAnalysisModal(plugin,project.id,category).open();};metric.createSpan({text:title});metric.createEl('strong',{text:value===null?'—':String(Number(value.toFixed(2)))});
+    }
+}
+function renderLrpBoardScore(parent,plugin,task,subId=null) {
+    const root=getLrpReviewRoot(plugin),target=getLrpTaskTarget(root,task);
+    if(!target || !getLrpScoringSettings(target.project).enabled)return;
+    const reference={projectId:target.project.id,ownerId:task.id,subId};
+    const entry=[...getLrpSubtaskReviewEntries(target.tasks),...getLrpLargeReviewEntries(target.tasks)].find(entry=>entry.ownerId===task.id && entry.subId===subId);
+    if(!entry)return;
+    const config=getLrpScoringSettings(target.project),review=getLrpEntryReview(entry);
+    if(entry.large && !entry.assessment && config.regularBasis==='subtask'){
+        const derived=getLrpLargeTaskScores(target.project,target.tasks).find(row=>row.ownerId===task.id);
+        if(derived && derived.regularAverage!==null){parent.createSpan({text:String(Number(derived.regularAverage.toFixed(2))),cls:'lrp-score-chip is-regular',attr:{title:'平时分：小任务均分（自动计算）','aria-label':'大任务自动平时均分'}});}
+        return;
+    }
+    const valid=isValidLrpSubtaskScore(review) && entry.completed && !(entry.large && config.regularBasis==='subtask' && review.category==='regular');
+    const category=valid?review.category:'';
+    const button=parent.createEl('button',{text:valid?String(Number(review.score.toFixed(2))):'评分',cls:`lrp-score-chip ${category?'is-'+category:'is-pending'}`,attr:{type:'button',title:valid?`${category==='regular'?'平时分':'考验分'}${entry.large && entry.assessment?'（仅作参考，不计总分）':''}：${review.score}，点击修改`:'选择类别并评分','aria-label':`${entry.title}评分`}});
+    button.disabled=!entry.completed;
+    if(!entry.completed)button.title='完成后可评分';
+    button.onclick=event=>{event.preventDefault();event.stopPropagation();enqueueLrpSubtaskReviews(root,[reference]);};
+}
+
+async function renderLrpAssessmentColumn(parent,view,tasks) {
+    const column=parent.createDiv('planner-board-column lrp-assessment-column');
+    const header=column.createDiv('planner-board-column-header');header.createDiv({cls:'planner-board-column-title',text:'考验'});header.createDiv({cls:'planner-board-column-count',text:String(tasks.length)});
+    const content=column.createDiv('planner-board-column-content');content.setAttribute('data-bucket-id','assessment');
+    const add=content.createDiv({text:'+ 添加考验',cls:'planner-board-add-card',attr:{role:'button',tabindex:'0'}});
+    const error=content.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});
+    add.onclick=async event=>{event.stopPropagation();if(add.disabled)return;add.disabled=true;error.textContent='';try{await addLrpAssessmentTask(view.plugin,view.plugin.settings.activeProjectId);}catch(problem){error.textContent=problem.message || '创建失败，请重试。';add.disabled=false;}};
+    add.onkeydown=event=>{if(event.key==='Enter' || event.key===' '){event.preventDefault();if(!add.disabled)void add.onclick(event);}};
+    for(const task of tasks)await view.renderCard(content,task);
+}
+
+class LrpScoreAnalysisModal extends obsidian.Modal {
+    constructor(plugin,projectId,category){super(plugin.app);this.plugin=getLrpReviewRoot(plugin);this.projectId=projectId;this.category=category;}
+    onOpen(){
+        const project=this.plugin.settings.projects.find(item=>item.id===this.projectId);if(!project){this.close();return;}
+        this.modalEl?.classList.add('lrp-score-analysis-modal');
+        if(this.modalEl)this.modalEl.style.width='min(540px,92vw)';
+        const host=this.contentEl.createDiv('lrp-score-analysis-content');host.style.setProperty('--lrp-project-color',project.calendarColor || '#9874b5');
+        renderLrpDetailedScoreAnalysis(host,project,this.plugin.taskStore.getAllForProject(project.id)||[],this.category);
+        if(this.modalEl && this.category==='exam'){const chart=host.querySelector('svg');if(chart){const width=Number(chart.getAttribute('viewBox').split(' ')[2]);this.modalEl.style.width=`min(${Math.min(540,Math.max(320,width+48))}px,92vw)`;}}
+    }
+    onClose(){this.contentEl.empty();}
+}
+
+function getLrpBucketNumber(bucket) {
+    const match=String(bucket.name).match(/第\s*(\d+)\s*周|Week\s*(\d+)/i);
+    return match ? Number(match[1] || match[2]) : 0;
+}
+function getLrpNextBucketNumber(project,buckets=project.buckets || []) {
+    return Math.max(0,...buckets.map(getLrpBucketNumber),...(project.skippedWeekNumbers || []).filter(Number.isInteger))+1;
+}
+function makeLrpNextBucket(project,buckets,neighbors) {
+    const bucket=makePersonalBucket(buckets,Math.random,crypto.randomUUID(),neighbors);
+    bucket.name=`第${getLrpNextBucketNumber(project,buckets)}周`;
+    return bucket;
+}
+function getLrpBucketCalendar(bucket) {
+    const dates=getLrpWeekDates(bucket.calendarWeek);
+    if(!dates)return null;
+    const info=getLrpWeekInfo(dates.start);
+    return {...info,monday:dates.start,dateLabel:dates.start.slice(5).replace('-','.')};
+}
+/** Default dates for a new task created in this bucket: Monday to Sunday of its calendar week. */
+function getLrpBucketTaskDefaults(bucket) {
+    const dates=getLrpWeekDates(bucket.calendarWeek);
+    return dates ? {startDate:dates.start,dueDate:dates.end} : null;
+}
+/** Dates a task should take when its bucket week changes, while its own dates are still empty/default. */
+function getLrpBucketMoveDefaults(task,fromBucketId,toBucketId,projects=[]) {
+    if(!task || !toBucketId || fromBucketId===toBucketId)return null;
+    const project=projects.find(item=>(item.buckets || []).some(bucket=>bucket.id===toBucketId))
+        || (fromBucketId && projects.find(item=>(item.buckets || []).some(bucket=>bucket.id===fromBucketId)));
+    if(!project)return null;
+    const buckets=project.buckets || [];
+    const from=fromBucketId ? buckets.find(bucket=>bucket.id===fromBucketId) : null;
+    const to=buckets.find(bucket=>bucket.id===toBucketId);
+    if(!to)return null;
+    const source=from ? getLrpBucketTaskDefaults(from) : null,target=getLrpBucketTaskDefaults(to);
+    if(!target)return null;
+    const start=String(task.startDate || '').slice(0,10),due=String(task.dueDate || '').slice(0,10);
+    const sourceMatches=Boolean(source) && start===source.startDate && due===source.dueDate;
+    // Tasks created before bucket defaults existed only carry the creation-day start date.
+    const untouchedCreation=!due && Boolean(task.createdDate) && start===String(task.createdDate).slice(0,10);
+    // Assessment tasks are created without dates; assigning a week group fills them in.
+    const emptyDates=!start && !due;
+    if(!sourceMatches && !untouchedCreation && !emptyDates)return null;
+    return target;
+}
+async function saveLrpBucketSchedule(plugin,projectId,bucketId,draft) {
+    const root=getLrpReviewRoot(plugin),project=root.settings.projects.find(item=>item.id===projectId);
+    const bucket=project?.buckets?.find(item=>item.id===bucketId);
+    if(!bucket)throw new Error('周分组已不存在');
+    const number=Number(draft.number);
+    if(!Number.isInteger(number) || number<1 || number>9999)throw new Error('项目周数请填写1至9999的整数');
+    if(!draft.skip && project.buckets.some(item=>item.id!==bucketId && getLrpBucketNumber(item)===number))throw new Error('已有相同项目周数，请选择其他周数');
+    if(!draft.skip && draft.calendarWeek && !getLrpWeekDates(draft.calendarWeek))throw new Error('请选择有效的实际日历周');
+    const previousBuckets=project.buckets,previousSkipped=project.skippedWeekNumbers;
+    const tasks=root.taskStore.getAllForProject(projectId) || [],previousTasks=tasks.map(task=>({...task}));
+    let tasksWritten=false;
+    try{
+        if(draft.skip){
+            project.skippedWeekNumbers=[...new Set([...(previousSkipped || []),number])];
+            project.buckets=previousBuckets.filter(item=>item.id!==bucketId);
+            for(const task of tasks)if(task.bucketId===bucketId)task.bucketId=null;
+            if(tasks.some((task,index)=>task.bucketId!==previousTasks[index].bucketId)){await root.taskStore.writeProjectFile(projectId,tasks);tasksWritten=true;}
+        }else{
+            project.buckets=previousBuckets.map(item=>item.id===bucketId?{...item,name:`第${number}周`,calendarWeek:draft.calendarWeek || null}:item);
+            // Editing the latest project week redefines what '+ next week' means.
+            project.skippedWeekNumbers=(previousSkipped || []).filter(value=>value<=Math.max(...project.buckets.map(getLrpBucketNumber)));
+        }
+        await root.saveSettings();
+    }catch(error){
+        project.buckets=previousBuckets;
+        if(previousSkipped===undefined)delete project.skippedWeekNumbers;else project.skippedWeekNumbers=previousSkipped;
+        for(let i=0;i<tasks.length;i++){Object.assign(tasks[i],previousTasks[i]);if(!Object.prototype.hasOwnProperty.call(previousTasks[i],'bucketId'))delete tasks[i].bucketId;}
+        if(tasksWritten){try{await root.taskStore.writeProjectFile(projectId,tasks);}catch(rollback){throw new Error(`保存失败，任务恢复写入失败：${rollback.message}`);}}
+        throw error;
+    }
+    return project;
+}
+class LrpBucketScheduleModal extends obsidian.Modal {
+    constructor(view,bucket){super(view.app);this.view=view;this.bucket=bucket;}
+    onOpen(){
+        const form=this.contentEl.createEl('form',{cls:'lrp-week-schedule-form'});
+        form.createEl('h2',{text:'设置对应周'});
+        const number=form.createEl('label',{text:'项目第几周'}).createEl('input',{attr:{type:'number',min:'1',max:'9999','aria-label':'项目周数'}});number.value=String(getLrpBucketNumber(this.bucket)||1);
+        const week=form.createEl('label',{text:'对应实际日历周'}).createEl('input',{attr:{type:'week','aria-label':'对应实际日历周'}});
+        const today=getLrpWeekInfo(new Date());week.value=this.bucket.calendarWeek || `${today.year}-W${String(today.week).padStart(2,'0')}`;
+        const skipLabel=form.createEl('label',{cls:'lrp-week-skip'});const skip=skipLabel.createEl('input',{attr:{type:'checkbox'}});skipLabel.createSpan({text:'跳过此周'});
+        const error=form.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});
+        const actions=form.createDiv('lrp-new-project-actions');const cancel=actions.createEl('button',{text:'取消',attr:{type:'button'}});const save=actions.createEl('button',{text:'保存',attr:{type:'submit'}});
+        cancel.onclick=()=>this.close();skip.onchange=()=>{week.disabled=skip.checked;};
+        form.onsubmit=async event=>{event.preventDefault();if(save.disabled)return;save.disabled=true;try{
+            const project=await saveLrpBucketSchedule(this.view.plugin,this.view.plugin.settings.activeProjectId,this.bucket.id,{number:number.value,calendarWeek:week.value,skip:skip.checked});
+            this.view.buckets=project.buckets;this.close();await this.view.render();
+        }catch(problem){error.textContent=problem.message;save.disabled=false;}};
+    }
+    onClose(){this.contentEl.empty();}
+}
+function addLrpBucketScheduleHeader(header,view,bucket) {
+    const calendar=getLrpBucketCalendar(bucket);
+    const title=header.querySelector('.planner-board-column-title');
+    if(calendar)title.createSpan({text:` / ${calendar.year} ${calendar.week}周`,cls:'lrp-bucket-calendar-label'});
+    const date=header.createEl('button',{text:calendar?calendar.dateLabel:'选择周',cls:'lrp-bucket-monday',attr:{type:'button',title:'设置对应日历周、项目周数或跳周'}});
+    date.onclick=event=>{event.stopPropagation();new LrpBucketScheduleModal(view,bucket).open();};
+}
+
+function setupLrpPinnedSections(pinned,view) {
+    view.lrpPinnedSection ||= 'assessment';
+    const columns=[...pinned.querySelectorAll('.planner-board-column')];
+    const update=()=>{
+        for(const column of columns){
+            const kind=column.classList.contains('lrp-assessment-column')?'assessment':'unassigned';
+            const expanded=view.lrpPinnedSection===kind;
+            column.classList.toggle('lrp-pinned-collapsed',!expanded);
+            const content=column.querySelector('.planner-board-column-content');if(content)content.hidden=!expanded;
+            const toggle=column.querySelector('.lrp-pinned-toggle');if(toggle){toggle.textContent=expanded?'▾':'▸';toggle.setAttribute('aria-expanded',String(expanded));}
+        }
+    };
+    for(const column of columns){
+        const header=column.querySelector('.planner-board-column-header');
+        const kind=column.classList.contains('lrp-assessment-column')?'assessment':'unassigned';
+        const toggle=header.createEl('button',{text:'',cls:'lrp-pinned-toggle',attr:{type:'button','aria-label':kind==='assessment'?'展开或折叠考验':'展开或折叠未分组'}});
+        toggle.onclick=event=>{event.preventDefault();event.stopPropagation();view.lrpPinnedSection=view.lrpPinnedSection===kind?(kind==='assessment'?'unassigned':'assessment'):kind;update();};
+    }
+    update();
+}
+async function saveLrpTaskCosts(plugin,task,draft) {
+    const root=getLrpReviewRoot(plugin),target=getLrpTaskTarget(root,task);
+    if(!target)throw new Error('任务不存在');
+    if(!['fixed','hourly',''].includes(draft.costType))throw new Error('费用类型无效');
+    const partial={costType:draft.costType || undefined};
+    for(const key of ['costEstimate','costActual','hourlyRate']){
+        const value=Number(draft[key] || 0);if(!Number.isFinite(value) || value<0)throw new Error('金额请填写非负数');partial[key]=value;
+    }
+    const before={...target.owner};
+    try{await root.taskStore.updateTask(target.owner.id,partial);}
+    catch(error){for(const key of Object.keys(target.owner))if(!Object.prototype.hasOwnProperty.call(before,key))delete target.owner[key];Object.assign(target.owner,before);throw error;}
+}
+class LrpTaskCostModal extends obsidian.Modal {
+    constructor(plugin,task){super(plugin.app);this.plugin=plugin;this.task=task;}
+    onOpen(){
+        const form=this.contentEl.createEl('form',{cls:'lrp-cost-editor'});form.createEl('h3',{text:this.task.title});
+        const type=form.createEl('select',{attr:{'aria-label':'费用方式'}});
+        for(const [value,text] of [['fixed','固定金额'],['hourly','按工时'],['','不使用']])type.createEl('option',{value,text});type.value=this.task.costType || 'fixed';
+        const fields={};
+        for(const [key,title] of [['costEstimate','预计金额'],['costActual','实际金额'],['hourlyRate','每小时金额']]){
+            const label=form.createEl('label',{text:title});const input=label.createEl('input',{attr:{type:'number',min:'0',step:'0.01','aria-label':title}});input.value=String(this.task[key] ?? 0);fields[key]={label,input};
+        }
+        const update=()=>{fields.hourlyRate.label.hidden=type.value!=='hourly';fields.costEstimate.label.hidden=fields.costActual.label.hidden=type.value!=='fixed';};type.onchange=update;update();
+        const error=form.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});const actions=form.createDiv('lrp-new-project-actions');const cancel=actions.createEl('button',{text:'取消',attr:{type:'button'}});const save=actions.createEl('button',{text:'保存',attr:{type:'submit'}});cancel.onclick=()=>this.close();
+        form.onsubmit=async event=>{event.preventDefault();if(save.disabled)return;save.disabled=true;try{await saveLrpTaskCosts(this.plugin,this.task,{costType:type.value,...Object.fromEntries(Object.entries(fields).map(([key,field])=>[key,field.input.value]))});this.close();}catch(problem){error.textContent=problem.message;save.disabled=false;}};
+    }
+    onClose(){this.contentEl.empty();}
+}
+function renderLrpEditableCostCell(row,plugin,task,key,project,isRolledUp) {
+    const currency=project?.currencySymbol || '$';const value=key==='costEstimate'?getTaskEstimatedCost(task,project):getTaskActualCost(task,project);
+    const cell=row.createEl('td',{cls:'planner-effort-cell planner-cost-cell'});
+    const button=cell.createEl('button',{text:task.costType?formatCurrency(value,currency):'—',cls:'lrp-cost-cell-button',attr:{type:'button','aria-label':key==='costEstimate'?'编辑预计费用':'编辑实际费用'}});
+    button.disabled=Boolean(isRolledUp);
+    button.onclick=event=>{event.stopPropagation();new LrpTaskCostModal(getLrpReviewRoot(plugin),task).open();};
+}
+function getLrpCostAnalysis(tasks,project) {
+    const parents=new Set(tasks.filter(task=>task.parentId).map(task=>task.parentId));
+    const rows=tasks.filter(task=>!parents.has(task.id) && task.costType).map(task=>({task,title:task.title,estimated:getTaskEstimatedCost(task,project),actual:getTaskActualCost(task,project)})).map(row=>({...row,difference:row.actual-row.estimated}));
+    const estimated=rows.reduce((sum,row)=>sum+row.estimated,0),actual=rows.reduce((sum,row)=>sum+row.actual,0);
+    const budget=project?.budgetTotal>0?project.budgetTotal:estimated;
+    return {rows,estimated,actual,budget,difference:actual-budget,overCount:rows.filter(row=>row.difference>0).length};
+}
+function formatLrpCostDifference(value,currency) {return `${value>0?'+':''}${formatCurrency(value,currency)}`;}
+async function saveLrpCostNote(plugin,projectId,note) {
+    const root=getLrpReviewRoot(plugin),project=root.settings.projects.find(item=>item.id===projectId);
+    if(!project)throw new Error('项目不存在');
+    const before=project.costNote,had=Object.prototype.hasOwnProperty.call(project,'costNote');project.costNote=String(note);
+    try{await root.saveSettings();}catch(error){if(had)project.costNote=before;else delete project.costNote;throw error;}
+}
+class LrpCostAnalysisModal extends obsidian.Modal {
+    constructor(plugin,projectId,onlyOver=false){super(plugin.app);this.plugin=getLrpReviewRoot(plugin);this.projectId=projectId;this.onlyOver=onlyOver;}
+    onOpen(){
+        const project=this.plugin.settings.projects.find(item=>item.id===this.projectId);if(!project){this.close();return;}
+        const currency=project.currencySymbol || '$',data=getLrpCostAnalysis(this.plugin.taskStore.getAllForProject(project.id)||[],project);
+        this.contentEl.createEl('h3',{text:this.onlyOver?'超支任务明细':'预算与费用明细'});
+        this.contentEl.createEl('p',{text:`${project.name} · 总预算 ${formatCurrency(data.budget,currency)} · 实际 ${formatCurrency(data.actual,currency)} · 差额 ${formatLrpCostDifference(data.difference,currency)}`});
+        const table=this.contentEl.createEl('table',{cls:'lrp-cost-analysis-table'}),head=table.createEl('thead').createEl('tr');
+        for(const title of ['任务','原预算','实际金额','超出／节余'])head.createEl('th',{text:title});
+        const body=table.createEl('tbody');
+        for(const row of data.rows.filter(row=>!this.onlyOver || row.difference>0)){
+            const tr=body.createEl('tr');tr.createEl('td',{text:row.title});tr.createEl('td',{text:formatCurrency(row.estimated,currency)});tr.createEl('td',{text:formatCurrency(row.actual,currency)});tr.createEl('td',{text:formatLrpCostDifference(row.difference,currency),cls:row.difference>0?'lrp-cost-positive':'lrp-cost-negative'});
+        }
+    }
+    onClose(){this.contentEl.empty();}
+}
+function renderLrpCostDashboardSection(parent,plugin,project,tasks) {
+    const data=getLrpCostAnalysis(tasks,project),currency=project.currencySymbol || '$';
+    const section=parent.createDiv('dashboard-section lrp-dashboard-cost-section');const heading=section.createDiv('lrp-dashboard-cost-heading');heading.createEl('h3',{text:'预算与费用'});
+    const report=heading.createEl('button',{text:'查看费用报表',attr:{type:'button'}});report.onclick=()=>new LrpCostAnalysisModal(plugin,project.id).open();
+    const grid=section.createDiv('dashboard-kpi-grid lrp-dashboard-cost-grid');
+    for(const [title,value,kind] of [['预计金额',formatCurrency(data.estimated,currency),'estimated'],['实际金额',formatCurrency(data.actual,currency),'actual'],['超出预算',formatLrpCostDifference(data.difference,currency),'difference'],['超支任务数',String(data.overCount),'count'],['说明',project.costNote?'已填写':'无','note']]){
+        const card=grid.createEl('button',{cls:'dashboard-kpi-card lrp-cost-metric',attr:{type:'button'}});card.createDiv({cls:'dashboard-kpi-title',text:title});
+        card.createDiv({cls:`dashboard-kpi-value${kind==='difference'?(data.difference>0?' lrp-cost-positive':' lrp-cost-negative'):''}`,text:value});
+        card.onclick=()=>{if(kind==='note'){editor.hidden=!editor.hidden;if(!editor.hidden)textarea.focus();}else new LrpCostAnalysisModal(plugin,project.id,kind==='count').open();};
+    }
+    const editor=section.createDiv('lrp-cost-note-editor');editor.hidden=true;
+    const textarea=editor.createEl('textarea',{attr:{rows:'4','aria-label':'费用说明',placeholder:'填写费用说明…'}});textarea.value=project.costNote || '无';
+    const error=editor.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});const actions=editor.createDiv('lrp-new-project-actions');const cancel=actions.createEl('button',{text:'收起',attr:{type:'button'}});const save=actions.createEl('button',{text:'保存说明',attr:{type:'button'}});cancel.onclick=()=>{editor.hidden=true;};
+    save.onclick=async()=>{if(save.disabled)return;save.disabled=true;try{await saveLrpCostNote(plugin,project.id,textarea.value);editor.hidden=true;grid.lastElementChild.querySelector('.dashboard-kpi-value').textContent=project.costNote?'已填写':'无';}catch(problem){error.textContent=problem.message;}finally{save.disabled=false;}};
+    return section;
+}
+async function saveLrpProjectReview(plugin,projectId,note) {
+    const root=getLrpReviewRoot(plugin),project=root.settings.projects.find(item=>item.id===projectId);
+    if(!project)throw new Error('项目不存在');
+    const state=getLrpProjectState(root,root.taskStore.getAllForProject(projectId)||[]);
+    if(!state.done && !state.abandoned)throw new Error('项目完成或放弃后可填写项目复盘');
+    const before=project.review,had=Object.prototype.hasOwnProperty.call(project,'review');project.review=String(note);
+    try{await root.saveSettings();}catch(error){if(had)project.review=before;else delete project.review;throw error;}
+}
+class LrpProjectReviewModal extends obsidian.Modal {
+    constructor(plugin,project,onSaved){super(plugin.app);this.plugin=plugin;this.project=project;this.onSaved=onSaved;}
+    onOpen(){
+        this.contentEl.createEl('h3',{text:'编辑项目复盘'});const form=this.contentEl.createEl('form',{cls:'lrp-project-review-form'});
+        const text=form.createEl('textarea',{attr:{rows:'7','aria-label':'项目复盘'}});text.value=this.project.review || '';
+        const error=form.createDiv({cls:'lrp-new-project-error',attr:{role:'alert'}});const actions=form.createDiv('lrp-new-project-actions');const cancel=actions.createEl('button',{text:'取消',attr:{type:'button'}});const save=actions.createEl('button',{text:'保存',attr:{type:'submit'}});cancel.onclick=()=>this.close();
+        form.onsubmit=async event=>{event.preventDefault();if(save.disabled)return;save.disabled=true;try{await saveLrpProjectReview(this.plugin,this.project.id,text.value);this.onSaved?.();this.close();}catch(problem){error.textContent=problem.message;save.disabled=false;}};
+    }
+    onClose(){this.contentEl.empty();}
+}
+function renderLrpProjectReview(parent,plugin,project,tasks) {
+    const state=getLrpProjectState(plugin,tasks);if(!state.done && !state.abandoned)return;
+    const section=parent.createDiv('lrp-project-review-section'),heading=section.createDiv('lrp-project-review-heading');heading.createEl('h3',{text:'项目复盘'});
+    const edit=heading.createEl('button',{text:'编辑',attr:{type:'button'}});
+    const body=section.createDiv({cls:'lrp-project-review-body',text:project.review || '无'});
+    edit.onclick=()=>new LrpProjectReviewModal(plugin,project,()=>{body.textContent=project.review || '无';}).open();
+}
+function getLrpPinnedFingerprint(view) {
+    const tasks=view.taskStore.getAll(),project=view.plugin.settings.projects.find(item=>item.id===view.plugin.settings.activeProjectId);
+    return JSON.stringify([project?.id,project?.unassignedBucketName,project?.calendarColor,view.currentFilters,tasks.filter(task=>!(project?.buckets || []).some(bucket=>bucket.id===task.bucketId) || isLrpAssessmentTask(task,tasks))]);
+}
+function getLrpScoreAnalysisRows(project,tasks) {
+    const scores=getLrpProjectScores(project,tasks);
+    const regular=scores.entries.filter(entry=>!entry.assessment && Boolean(entry.large)===(scores.regularBasis==='task') && isValidLrpSubtaskScore(getLrpEntryReview(entry))).map(entry=>({title:entry.title,score:entry.item.reviewScore.score}));
+    const weighted=regular.map(entry=>({...entry,weight:scores.regularWeight/(regular.length || 1),contribution:entry.score*scores.regularWeight/(regular.length || 1)/100}));
+    if(scores.examAverage!==null)weighted.push({title:'考验模块',score:scores.examAverage,weight:scores.examWeight,contribution:scores.examAverage*scores.examWeight/100});
+    const exam=getLrpSubtaskReviewEntries(tasks).filter(entry=>entry.assessment && entry.completed && isValidLrpSubtaskScore(entry.item.reviewScore));
+    const byId=new Map(tasks.map(task=>[task.id,task])),groups=new Map();
+    for(const entry of exam){let root=byId.get(entry.ownerId),seen=new Set();while(root?.parentId && !seen.has(root.id)){seen.add(root.id);root=byId.get(root.parentId);}const key=root?.id || entry.ownerId;if(!groups.has(key))groups.set(key,{title:root?.title || entry.parentTitle,entries:[]});groups.get(key).entries.push({title:entry.title,score:entry.item.reviewScore.score});}
+    return {scores,regular:regular.sort((a,b)=>b.score-a.score),weighted,examGroups:[...groups.values()]};
+}
+function renderLrpDetailedScoreAnalysis(host,project,tasks,category) {
+    const data=getLrpScoreAnalysisRows(project,tasks),number=value=>value===null?'待评分':String(Number(value.toFixed(2)));
+    const band=host.createDiv(`lrp-analysis-band is-${category}`);
+    band.createSpan({text:category==='total'?'总分':category==='regular'?'平时均分':'考验均分'});
+    band.createEl('strong',{text:number(category==='total'?data.scores.total:category==='regular'?data.scores.regularAverage:data.scores.examAverage)});
+    if(category==='total')band.createSpan({text:`平时 ${data.scores.regularWeight}% · 考验 ${data.scores.examWeight}%`});
+    if(category==='total'){
+        const table=host.createEl('table',{cls:'lrp-weighted-analysis-table'}),head=table.createEl('thead').createEl('tr');for(const title of ['模块','原始分','权重','加权贡献'])head.createEl('th',{text:title});
+        const body=table.createEl('tbody');for(const row of data.weighted){const tr=body.createEl('tr');tr.createEl('td',{text:row.title});tr.createEl('td',{text:number(row.score)});tr.createEl('td',{text:`${number(row.weight)}%`});const cell=tr.createEl('td');cell.createEl('strong',{text:number(row.contribution)});cell.createEl('progress',{attr:{max:'100',value:String(row.contribution),'aria-label':`${row.title}加权贡献`}});}
+    }else if(category==='regular'){
+        const list=host.createDiv('lrp-regular-rank');list.createEl('h4',{text:'平时任务排名'});
+        data.regular.forEach((entry,index)=>{const row=list.createDiv('lrp-rank-row');row.createSpan({text:String(index+1),cls:'lrp-rank-index'});row.createSpan({text:entry.title});row.createEl('progress',{attr:{max:'100',value:String(entry.score)}});row.createEl('strong',{text:number(entry.score)});});
+    }else{
+        const scroll=host.createDiv('lrp-exam-chart-scroll');
+        const groups=data.examGroups;if(!groups.length){scroll.createSpan({text:'暂无已评分考验小任务'});return;}
+        const groupWidths=groups.map(group=>Math.max(100,(group.entries.length-1)*32+25+12,Math.min(160,String(group.title).length*12)));
+        const groupStarts=[];let cursor=48;for(const groupWidth of groupWidths){groupStarts.push(cursor);cursor+=groupWidth+24;}
+        const width=cursor-24+16,height=265;
+        const svg=host.ownerDocument.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.setAttribute('role','img');svg.setAttribute('aria-label','考验小任务分组得分，纵轴0至100分');svg.style.width=`${width}px`;svg.style.maxWidth='none';scroll.appendChild(svg);
+        const element=(tag,attrs,text)=>{const node=host.ownerDocument.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,value] of Object.entries(attrs))node.setAttribute(key,String(value));if(text!==undefined)node.textContent=String(text);svg.appendChild(node);return node;};
+        for(let score=0;score<=100;score+=20){const y=215-score*1.75;element('line',{x1:40,y1:y,x2:width-10,y2:y,stroke:'var(--background-modifier-border)','stroke-dasharray':'4 4'});element('text',{x:32,y:y+4,'text-anchor':'end',fill:'var(--text-muted)','font-size':12},score);}
+        groups.forEach((group,index)=>{const start=groupStarts[index]+(groupWidths[index]-((group.entries.length-1)*32+25))/2,colors=['#efb1bc','#df7d92','#bd4e68'];group.entries.forEach((entry,j)=>{const x=start+j*32,y=215-entry.score*1.75;const rect=element('rect',{x,y,width:25,height:entry.score*1.75,rx:5,fill:colors[j%colors.length]});const title=host.ownerDocument.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=`${group.title} · ${entry.title}：${entry.score}`;rect.appendChild(title);element('text',{x:x+12.5,y:y-7,'text-anchor':'middle',fill:'#a62f46','font-size':13,'font-weight':600},entry.score);});element('text',{x:start+(group.entries.length-1)*16+12,y:240,'text-anchor':'middle',fill:'var(--text-normal)','font-size':12},group.title);});
+    }
+}
+
+// Shared project groups, navigation and management for dashboard, board and dependencies.
+const LRP_UNGROUPED_PROJECTS = '__ungrouped__';
+function getLrpProjectGroups(settings) {
+  const seen=new Set();
+  return (settings.projectGroups || []).filter(group=>group && group.id && group.id!==LRP_UNGROUPED_PROJECTS && !seen.has(group.id) && seen.add(group.id)).map(group=>({id:group.id,name:group.name})).concat({id:LRP_UNGROUPED_PROJECTS,name:'未分组'});
+}
+function getLrpProjectGroupId(settings,project) {
+  return (settings.projectGroups || []).some(group=>group.id===project.groupId)?project.groupId:LRP_UNGROUPED_PROJECTS;
+}
+function sortLrpGroupedProjects(plugin,projects) {
+  const ended=new Map(projects.map(project=>[project.id,!getLrpProjectState(plugin,plugin.taskStore.getAllForProject(project.id) || []).unfinished]));
+  return [...projects].sort((a,b)=>Number(ended.get(a.id))-Number(ended.get(b.id)) || (Date.parse(b.createdDate)||0)-(Date.parse(a.createdDate)||0));
+}
+async function saveLrpProjectGroup(plugin,action) {
+  const settings=plugin.settings;
+  const previousGroups=settings.projectGroups;
+  const previousProjects=settings.projects;
+  settings.projectGroups=(previousGroups || []).map(group=>({...group}));
+  settings.projects=(previousProjects || []).map(project=>({...project}));
+  try { action(settings);await plugin.saveSettings(); }
+  catch(error){settings.projectGroups=previousGroups;settings.projects=previousProjects;throw error;}
+}
+function renderLrpGroupedProjectPicker(menu,plugin,onChoose) {
+  menu.classList.add('lrp-grouped-project-menu');
+  const navigation=menu.createDiv('lrp-project-group-navigation');
+  const all=navigation.createEl('button',{text:'全部项目',attr:{type:'button'}});
+  all.onclick=()=>onChoose('全部项目',null,'#999999');
+  const projects=menu.createDiv('lrp-project-group-flyout');projects.hidden=true;
+  const groupButtons=[];
+  const groupsById=new Map();
+  for(const group of getLrpProjectGroups(plugin.settings)) {
+    const button=navigation.createEl('button',{text:group.name,attr:{type:'button','aria-expanded':'false'}});
+    groupButtons.push(button);groupsById.set(group.id,button);
+    button.onclick=()=>{
+      for(const item of groupButtons)item.setAttribute('aria-expanded',String(item===button));
+      projects.hidden=false;projects.empty();projects.createDiv({text:group.name,cls:'lrp-project-group-heading'});
+      const members=sortLrpGroupedProjects(plugin,(plugin.settings.projects || []).filter(project=>getLrpProjectGroupId(plugin.settings,project)===group.id));
+      for(const project of members){
+        const state=getLrpProjectState(plugin,plugin.taskStore.getAllForProject(project.id) || []);
+        const entry=projects.createEl('button',{text:project.name,cls:state.unfinished?'':'is-ended',attr:{type:'button'}});
+        entry.style.setProperty('--lrp-project-color',project.calendarColor || '#999999');
+        entry.onclick=()=>onChoose(project.name,project.id,project.calendarColor);
+      }
+      if(!members.length)projects.createDiv({text:'暂无项目',cls:'lrp-project-group-empty'});
+    };
+  }
+  const showCurrentGroup=()=>{
+    const selected=(plugin.settings.projects || []).find(project=>project.id===plugin.settings.activeProjectId);
+    if(selected && !plugin.settings.showAllProjects)groupsById.get(getLrpProjectGroupId(plugin.settings,selected))?.onclick();
+  };
+  showCurrentGroup();return {showCurrentGroup};
+}
+function buildLrpGroupedProjectFinder(sidebar,view,records,key='lrpBoard') {
+  const plugin=view.plugin;
+  const header=sidebar.createDiv('lrp-project-finder-header');
+  header.createEl('h3',{text:'查找项目'});
+  const manage=header.createEl('button',{text:'管理',cls:'lrp-project-finder-manage',attr:{type:'button'}});
+  manage.onclick=()=>new LrpManageProjectsModal(plugin,()=>view.render()).open();
+  const search=sidebar.createEl('input',{attr:{type:'search',placeholder:'搜索项目…','aria-label':'搜索项目名称'}});
+  search.value=view[key+'ProjectSearch'] || '';
+  const status=sidebar.createEl('select',{attr:{'aria-label':'项目状态'}});
+  for(const [value,text] of [['all','全部'],['unfinished','未完成'],['completed','已完成'],['notStarted','未开始'],['inProgress','进行中'],['blocked','受阻'],['overdue','逾期'],['abandoned','已放弃']])status.createEl('option',{text,value});
+  status.value=view[key+'ProjectStatus'] || 'all';
+  const list=sidebar.createDiv('lrp-project-finder-list');
+  const empty=sidebar.createDiv({text:'没有符合条件的项目',cls:'lrp-project-finder-empty'});
+  const buttons=new Map();
+  const focus=(id,scroll=true)=>{
+    view[key+'FocusedProject']=id;
+    for(const record of records){
+      const selected=record.project.id===id;
+      record.section.classList?.toggle?.('lrp-project-finder-focused',selected);
+      record.section.classList?.toggle?.('lrp-dashboard-focused',selected);
+      if(selected && scroll && !record.section.hidden)record.section.scrollIntoView?.({behavior:'smooth',block:'start',inline:'nearest'});
+    }
+    for(const [projectId,button] of buttons)button.setAttribute('aria-pressed',String(projectId===id));
+  };
+  const refresh=()=>{
+    list.empty();buttons.clear();
+    const query=search.value.trim().toLocaleLowerCase();
+    const visible=[];
+    for(const record of records){
+      const tasks=plugin.taskStore.getAllForProject(record.project.id) || [];
+      const match=record.project.name.toLocaleLowerCase().includes(query) && matchesLrpProjectStatus(plugin,tasks,status.value);
+      const wasHidden=record.section.hidden;record.section.hidden=!match;
+      if(match){visible.push(record);if(wasHidden && record.child)void Promise.resolve(record.child.render()).catch(console.error);}
+    }
+    const collapsed=view[key+'CollapsedGroups'] || (view[key+'CollapsedGroups']=new Set());
+    for(const group of getLrpProjectGroups(plugin.settings)){
+      const members=visible.filter(record=>getLrpProjectGroupId(plugin.settings,record.project)===group.id);
+      if(query && !members.length)continue;
+      const details=list.createEl('details',{cls:'lrp-project-finder-group',attr:{'data-lrp-group-id':group.id}});details.open=!collapsed.has(group.id) || Boolean(query);
+      const title=details.createEl('summary',{text:group.name});title.createSpan({text:String(members.length),cls:'lrp-project-group-count'});
+      details.ontoggle=()=>{if(details.open)collapsed.delete(group.id);else collapsed.add(group.id);};
+      for(const project of sortLrpGroupedProjects(plugin,members.map(record=>record.project))){
+        const state=getLrpProjectState(plugin,plugin.taskStore.getAllForProject(project.id) || []);
+        const button=details.createEl('button',{text:project.name,cls:state.unfinished?'':'is-ended',attr:{type:'button',title:'单击定位，双击进入项目，右键编辑项目'}});
+        button.style.setProperty('--lrp-project-color',project.calendarColor || '#999999');
+        button.onclick=()=>focus(project.id);
+        button.ondblclick=event=>{event.preventDefault();void openLrpProjectFromHeading(view,project.id).catch(error=>{console.error(error);new obsidian.Notice('打开项目失败，请重试');});};
+        button.oncontextmenu=event=>{event.preventDefault();new LrpProjectOverviewModal(plugin,project.id,()=>view.render()).open();};
+        buttons.set(project.id,button);
+      }
+    }
+    empty.hidden=visible.length>0;focus(view[key+'FocusedProject'],false);
+  };
+  search.oninput=()=>{view[key+'ProjectSearch']=search.value;refresh();};
+  status.onchange=()=>{view[key+'ProjectStatus']=status.value;refresh();};
+  refresh();return {refresh,focus};
+}
+class LrpManageProjectsModal extends obsidian.Modal {
+  constructor(plugin,onChanged){super(plugin.app);this.plugin=plugin;this.onChanged=onChanged;this.chosen=new Set();this.busy=false;}
+  onOpen(){this.modalEl?.classList?.add('lrp-manage-projects-modal');this.draw();}
+  async run(action){
+    if(this.busy)return;this.busy=true;this.contentEl.setAttribute('aria-busy','true');
+    const state=captureLrpViewState(this.contentEl),scrollTop=this.contentEl.scrollTop;
+    try{await action();this.draw();restoreLrpViewState(this.contentEl,state);this.contentEl.scrollTop=scrollTop;await this.onChanged?.();}
+    catch(error){const feedback=this.contentEl.querySelector?.('.lrp-management-error');if(feedback){feedback.hidden=false;feedback.textContent=error?.message || '保存失败，请重试';}else new obsidian.Notice(error?.message || '保存失败，请重试');}
+    finally{this.busy=false;this.contentEl.setAttribute('aria-busy','false');}
+  }
+  groupSelect(parent,value){
+    const select=parent.createEl('select',{attr:{'aria-label':'项目分组'}});
+    for(const group of getLrpProjectGroups(this.plugin.settings))select.createEl('option',{text:group.name,value:group.id});
+    select.value=value || LRP_UNGROUPED_PROJECTS;return select;
+  }
+  draw(){
+    const body=this.contentEl;body.empty();body.createEl('h2',{text:'管理项目'});
+    const feedback=body.createDiv({cls:'lrp-management-error',attr:{role:'alert','aria-live':'polite'}});feedback.hidden=true;
+    const groups=body.createDiv('lrp-management-section');groups.createEl('h3',{text:'项目分组'});
+    const form=groups.createEl('form',{cls:'lrp-management-form'});
+    const name=form.createEl('input',{attr:{type:'text',placeholder:'新分组名称','aria-label':'新分组名称',required:'true'}});
+    form.createEl('button',{text:'新建分组',attr:{type:'submit'}});
+    form.onsubmit=event=>{event.preventDefault();void this.run(()=>saveLrpProjectGroup(this.plugin,settings=>{
+      const title=name.value.trim();if(!title)throw new Error('请输入分组名称。');
+      if(settings.projectGroups.some(group=>group.name===title))throw new Error('已有同名分组。');
+      settings.projectGroups.push({id:crypto.randomUUID(),name:title});
+    }));};
+    const create=body.createDiv('lrp-management-section');create.createEl('h3',{text:'新建项目'});
+    const projectForm=create.createEl('form',{cls:'lrp-management-form'});
+    const projectName=projectForm.createEl('input',{attr:{type:'text',placeholder:'项目名称','aria-label':'新项目名称',required:'true'}});
+    const projectGroup=this.groupSelect(projectForm);
+    projectForm.createEl('button',{text:'新建项目',attr:{type:'submit'}});
+    projectForm.onsubmit=event=>{event.preventDefault();void this.run(async()=>{
+      const active=this.plugin.settings.activeProjectId,all=this.plugin.settings.showAllProjects;
+      await createLrpProject(this.plugin,projectName.value,projectGroup.value===LRP_UNGROUPED_PROJECTS?null:projectGroup.value,{activeProjectId:active,showAllProjects:all});
+    });};
+    const projects=body.createDiv('lrp-management-section');
+    const heading=projects.createDiv('lrp-management-heading');heading.createEl('h3',{text:'项目归属'});
+    const remove=heading.createEl('button',{text:`删除所选（${this.chosen.size}）`,cls:'mod-warning',attr:{type:'button'}});
+    remove.disabled=!this.chosen.size;
+    remove.onclick=()=>{
+      if(this.busy)return;
+      const selected=(this.plugin.settings.projects || []).filter(project=>this.chosen.has(project.id));
+      if(!selected.length)return;
+      if(selected.length>=(this.plugin.settings.projects || []).length){new obsidian.Notice('至少保留一个项目。');return;}
+      new LrpDeleteProjectsModal(this.plugin,selected,async()=>{
+        if(this.busy)throw new Error('请等待当前操作完成。');
+        this.busy=true;
+        try{const result=await deleteLrpProjects(this.plugin,selected.map(project=>project.id));this.chosen.clear();this.draw();await this.onChanged?.();
+          new obsidian.Notice(result.failures.length?'项目已移除，部分目录未能删除，文件已保留。':`已删除 ${result.removed.length} 个项目`);
+        }finally{this.busy=false;}
+      }).open();
+    };
+    const batch=projects.createDiv('lrp-management-form');const target=this.groupSelect(batch);
+    batch.createEl('button',{text:'移动所选项目',attr:{type:'button'}}).onclick=()=>void this.run(()=>saveLrpProjectGroup(this.plugin,settings=>{
+      for(const project of settings.projects)if(this.chosen.has(project.id))project.groupId=target.value===LRP_UNGROUPED_PROJECTS?null:target.value;
+    }));
+    for(const group of getLrpProjectGroups(this.plugin.settings)){
+      const section=projects.createEl('details',{cls:'lrp-management-project-group',attr:{'data-lrp-group-id':group.id}});section.open=true;
+      const members=sortLrpGroupedProjects(this.plugin,(this.plugin.settings.projects || []).filter(project=>getLrpProjectGroupId(this.plugin.settings,project)===group.id));
+      const title=section.createEl('summary',{cls:'lrp-management-group-heading'});
+      title.createSpan({text:`${group.name}（${members.length}）`,cls:'lrp-management-group-name'});
+      if(group.id!==LRP_UNGROUPED_PROJECTS){
+        const actions=title.createSpan({cls:'lrp-management-group-actions'});
+        const rename=actions.createEl('button',{text:'改名',attr:{type:'button','aria-label':`改名分组 ${group.name}`}});
+        const removeGroup=actions.createEl('button',{text:'移除分组',attr:{type:'button',title:'项目保留并移至未分组','aria-label':`移除分组 ${group.name}`}});
+        const edit=section.createEl('form',{cls:'lrp-management-form lrp-management-group-rename'});edit.hidden=true;
+        const input=edit.createEl('input',{attr:{type:'text','aria-label':`分组名称 ${group.name}`,required:'true'}});input.value=group.name;
+        edit.createEl('button',{text:'保存',attr:{type:'submit'}});
+        const cancel=edit.createEl('button',{text:'取消',attr:{type:'button'}});
+        rename.onclick=event=>{event.preventDefault();event.stopPropagation();section.open=true;edit.hidden=!edit.hidden;if(!edit.hidden)input.focus?.();};
+        cancel.onclick=()=>{edit.hidden=true;input.value=group.name;rename.focus?.();};
+        edit.onsubmit=event=>{event.preventDefault();void this.run(()=>saveLrpProjectGroup(this.plugin,settings=>{
+          const name=input.value.trim();if(!name)throw new Error('请输入分组名称。');
+          if(settings.projectGroups.some(item=>item.id!==group.id && item.name===name))throw new Error('已有同名分组。');
+          settings.projectGroups.find(item=>item.id===group.id).name=name;
+        }));};
+        removeGroup.onclick=event=>{event.preventDefault();event.stopPropagation();void this.run(()=>saveLrpProjectGroup(this.plugin,settings=>{
+          settings.projectGroups=settings.projectGroups.filter(item=>item.id!==group.id);
+          for(const project of settings.projects)if(project.groupId===group.id)delete project.groupId;
+        }));};
+      }
+      for(const project of members){
+        const row=section.createDiv('lrp-management-project-row');
+        const label=row.createEl('label');const box=label.createEl('input',{attr:{type:'checkbox','aria-label':`选择项目 ${project.name}`}});
+        box.checked=this.chosen.has(project.id);label.createSpan({text:project.name});
+        box.onchange=()=>{if(box.checked)this.chosen.add(project.id);else this.chosen.delete(project.id);remove.textContent=`删除所选（${this.chosen.size}）`;remove.disabled=!this.chosen.size;};
+        const select=this.groupSelect(row,group.id);
+        select.onchange=()=>void this.run(()=>saveLrpProjectGroup(this.plugin,settings=>{settings.projects.find(item=>item.id===project.id).groupId=select.value===LRP_UNGROUPED_PROJECTS?null:select.value;}));
+      }
+    }
+  }
+  onClose(){this.contentEl.empty();}
+}
+
+// Shared view-state and modal conventions. State is in memory, never in task files.
+const LRP_VIEW_STATE_SELECTORS = [
+  '.planner-grid-content','.dashboard-content','.lrp-dashboard-finder',
+  '.lrp-project-finder','.lrp-project-finder-content','.lrp-board-page',
+  '.planner-board-container','.planner-board-column-content',
+  '.myday-week-scroll','.myday-month-scroll','.lrp-time-scroll',
+  '.lrp-portfolio-content','.lrp-project-timeline-scroll','.lrp-dependency-scroll',
+  '.lrp-dependency-content','.planner-detail-wrapper'
+];
+function getLrpElementStateKey(element,selector,index) {
+  const owner=element.closest?.('[data-project-id]')?.getAttribute('data-project-id') || '';
+  const identity=element.getAttribute?.('data-bucket-id') || element.getAttribute?.('data-lrp-group-id') || '';
+  return `${selector}|${owner}|${identity || index}`;
+}
+function captureLrpViewState(container) {
+  if(!container?.querySelectorAll)return null;
+  const scroll=[{key:'root',top:container.scrollTop,left:container.scrollLeft}];
+  for(const selector of LRP_VIEW_STATE_SELECTORS){
+    [...container.querySelectorAll(selector)].forEach((element,index)=>scroll.push({key:getLrpElementStateKey(element,selector,index),top:element.scrollTop,left:element.scrollLeft}));
+  }
+  const details=[...container.querySelectorAll('details.lrp-project-overview,details[data-lrp-group-id]')].map((element,index)=>({key:getLrpElementStateKey(element,'details',index),open:element.open}));
+  const active=container.ownerDocument?.activeElement;
+  let focus=null;
+  if(active && container.contains?.(active) && active.matches?.('input[type="search"]')){
+    const candidates=[...container.querySelectorAll('input[type="search"]')];
+    focus={index:candidates.indexOf(active),start:active.selectionStart,end:active.selectionEnd};
+  }
+  return {scroll,details,focus};
+}
+function restoreLrpViewState(container,state) {
+  if(!state || !container?.querySelectorAll)return;
+  const positions=new Map(state.scroll.map(row=>[row.key,row]));
+  const root=positions.get('root');if(root){container.scrollTop=root.top;container.scrollLeft=root.left;}
+  for(const selector of LRP_VIEW_STATE_SELECTORS){
+    [...container.querySelectorAll(selector)].forEach((element,index)=>{
+      const row=positions.get(getLrpElementStateKey(element,selector,index));
+      if(row){element.scrollTop=row.top;element.scrollLeft=row.left;}
+    });
+  }
+  const expanded=new Map(state.details.map(row=>[row.key,row.open]));
+  [...container.querySelectorAll('details.lrp-project-overview,details[data-lrp-group-id]')].forEach((element,index)=>{
+    const key=getLrpElementStateKey(element,'details',index);if(expanded.has(key))element.open=expanded.get(key);
+  });
+  const active=container.ownerDocument?.activeElement;
+  if(state.focus && (!active || !active.isConnected || active===container.ownerDocument?.body)){
+    const target=container.querySelectorAll('input[type="search"]')[state.focus.index];
+    target?.focus?.({preventScroll:true});
+    if(state.focus.start!==null)target?.setSelectionRange?.(state.focus.start,state.focus.end);
+  }
+}
+function installLrpViewState(ViewClass,method,kind) {
+  const render=ViewClass.prototype[method];if(typeof render!=='function')return;
+  const close=ViewClass.prototype.onClose;
+  ViewClass.prototype.onClose=function(...args){
+    const plugin=this.plugin?.lrpRootPlugin || this.plugin;
+    const state=captureLrpViewState(this.containerEl);
+    if(state && this.lrpExperienceScopeKey && plugin){
+      (plugin.lrpViewExperienceStates || (plugin.lrpViewExperienceStates=new Map())).set(this.lrpExperienceScopeKey,state);
+    }
+    this.lrpExperienceGeneration=(this.lrpExperienceGeneration || 0)+1;
+    return close?.apply(this,args);
+  };
+  ViewClass.prototype[method]=function(...args){
+    const container=this.containerEl;
+    if(!container?.querySelectorAll)return render.apply(this,args);
+    const plugin=this.plugin?.lrpRootPlugin || this.plugin;
+    if(!plugin)return render.apply(this,args);
+    const scope=this.plugin.settings.showAllProjects?'all':this.plugin.settings.activeProjectId;
+    const locateTimelineWeek=kind==='timeline' && Boolean(this.lrpTimelineLocateCurrent || this.lrpTimelineState?.scope!==scope);
+    const page=kind==='detail'?this.task?.id || 'empty':kind==='calendar'?`${this.viewMode}:${(this.viewMode==='month'?this.monthAnchor:this.weekAnchor)?.toISOString?.().slice(0,10) || ''}`:'';
+    const key=`${kind}:${this.plugin.lrpEmbeddedScope?'embedded:':''}${scope}:${page}`;
+    const states=plugin.lrpViewExperienceStates || (plugin.lrpViewExperienceStates=new Map());
+    // A scope change must not overwrite the destination's saved position with the old DOM.
+    if(this.lrpExperienceScopeKey){
+      const captured=captureLrpViewState(container);
+      if(captured)states.set(this.lrpExperienceScopeKey,captured);
+    }
+    this.lrpExperienceScopeKey=key;
+    const state=states.get(key),generation=(this.lrpExperienceGeneration || 0)+1;
+    this.lrpExperienceGeneration=generation;
+    const restore=()=>{
+      if(container.isConnected===false)return;
+      if(generation!==this.lrpExperienceGeneration || this.lrpExperienceScopeKey!==key)return;
+      const restored=locateTimelineWeek && state ? {...state,scroll:state.scroll.map(row=>row.key.startsWith('.lrp-time-scroll|')?{...row,left:this.lrpTimelineState?.scroll || 0}:row)} : state;
+      restoreLrpViewState(container,restored);
+    };
+    const finished=()=>{
+      restore();
+      if(typeof requestAnimationFrame==='function')requestAnimationFrame(restore);
+    };
+    const result=render.apply(this,args);
+    if(result?.then)return result.then(value=>{finished();return value;});
+    finished();return result;
+  };
+}
+function applyLrpModalExperience(modal,size) {
+  modal.modalEl?.classList?.add('lrp-ui-modal',`lrp-ui-modal-${size}`);
+  modal.contentEl?.classList?.add('lrp-ui-modal-content');
+}
+function installLrpModalExperience(ModalClass,size) {
+  const open=ModalClass.prototype.onOpen;
+  ModalClass.prototype.onOpen=function(...args){applyLrpModalExperience(this,size);return open?.apply(this,args);};
+}
+for(const [ViewClass,method,kind] of [
+  [GridView,'render','grid'],[DashboardView,'render','dashboard'],
+  [BoardView,'render','board'],[GanttView,'render','timeline'],
+  [MyDayView,'render','calendar'],[DependencyGraphView,'refresh','graph'],
+  [TaskDetailView,'render','detail']
+])installLrpViewState(ViewClass,method,kind);
+for(const [ModalClass,size] of [
+  [LrpNewProjectModal,'small'],[LrpBucketColorModal,'small'],[LrpBucketScheduleModal,'small'],
+  [LrpTaskCostModal,'small'],[LrpSubtaskScoreModal,'small'],[LrpProjectTagModal,'small'],
+  [LrpProjectReviewModal,'medium'],[LrpScoreAnalysisModal,'medium'],[LrpManageProjectsModal,'medium'],
+  [LrpDeleteProjectsModal,'medium'],[LrpReplanModal,'medium'],[LrpDayTasksModal,'medium'],
+  [TaskListModal,'medium'],[CostReportModal,'large'],[LrpCostAnalysisModal,'large'],[LrpProjectOverviewModal,'large']
+])installLrpModalExperience(ModalClass,size);
+
+// Embedded verbatim in main.js. Plugin-originated, dated actionable calendar entries are linked.
+function getLrpAppleReminderRows(plugin, state) {
+  const rows=[];
+  for(const project of plugin.settings.projects || []) {
+    const tasks=plugin.taskStore.getAllForProject(project.id) || [];
+    for(const entry of getLrpCalendarTasks(tasks)) {
+      const owner=tasks.find(task=>task.id===(entry._lrpOwnerId || entry.id));
+      const actual=entry._lrpSubId ? owner?.subtasks?.find(sub=>sub.id===entry._lrpSubId) : owner;
+      if(!actual || !owner || actual.planningDisposition==='abandoned' || owner.planningDisposition==='abandoned')continue;
+      const date=entry.dueDate;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || toDateStr(new Date(`${date}T12:00:00`))!==date)continue;
+      const key=JSON.stringify([project.id,owner.id,entry._lrpSubId || null]);
+      const link=state.links[key];
+      const completed=entry._lrpSubId ? Boolean(actual.completed) : isLrpTaskComplete(actual,tasks);
+      // Do not flood Reminders with historical completed demo/project entries on first connection.
+      if(completed && !link)continue;
+      rows.push({key,projectId:project.id,ownerId:owner.id,subId:entry._lrpSubId || null,
+        title:String(actual.title || '未命名子任务'),date,completed,
+        notes:`项目：${project.name}\n所属任务：${owner.title || ''}${actual.description ? `\n\n${actual.description}` : ''}`,
+        reminderId:link?.reminderId || null,lastCompleted:typeof link?.completed==='boolean'?link.completed:null});
+    }
+  }
+  return rows;
+}
+// A local change since the last acknowledged sync wins; otherwise pull Apple's checkbox.
+function resolveLrpAppleCompletion(local, previous, remote) {
+  return typeof previous!=='boolean' || local!==previous ? local : remote;
+}
+function getLrpAppleRowFingerprint(row) {
+  return row ? JSON.stringify([row.key,row.title,row.date,row.notes,row.completed]) : null;
+}
+class LrpAppleRemindersSync {
+  constructor(plugin) {this.plugin=plugin;this.stopped=false;this.status='尚未连接';}
+  get status() {return this._status;}
+  set status(value) {this._status=value;if(this.statusElement?.isConnected)this.statusElement.textContent=value;}
+  get directory() {return this.plugin.manifest.dir;}
+  async initialize() {
+    if(process.platform!=='darwin' || !this.plugin.app.vault.adapter.getBasePath)return;
+    this.fs=require('fs/promises');this.path=require('path');
+    this.base=this.path.join(this.plugin.app.vault.adapter.getBasePath(),this.directory);
+    this.statePath=this.path.join(this.base,'apple-reminders-state.json');
+    try {this.state=JSON.parse(await this.fs.readFile(this.statePath,'utf8'));}
+    catch(error) {if(error.code!=='ENOENT')throw new Error('苹果同步记录无法读取，已停止以避免重复创建。');}
+    if(!this.state)this.state={version:1,namespace:crypto.randomUUID(),enabled:false,links:{}};
+    if(this.state.version!==1 || typeof this.state.namespace!=='string' || !this.state.links || typeof this.state.links!=='object')throw new Error('苹果同步记录格式无效。');
+    this.plugin.addCommand({id:'apple-reminders-connect',name:'连接苹果提醒事项与日历',callback:()=>void this.connect()});
+    this.plugin.addCommand({id:'apple-reminders-sync',name:'立即同步苹果提醒事项',callback:()=>void this.run(true)});
+    this.plugin.registerInterval(window.setInterval(()=>this.schedule(),30000));
+    this.plugin.registerDomEvent(window,'focus',()=>this.schedule());
+    this.plugin.register(()=>this.stop());
+    if(this.state.enabled)this.schedule();
+    else this.status='未连接 · 点击连接后授权提醒事项';
+  }
+  async saveState() {
+    const temporary=this.statePath+'.pending';
+    await this.fs.writeFile(temporary,JSON.stringify(this.state,null,2)+'\n',{mode:0o600});
+    await this.fs.rename(temporary,this.statePath);
+  }
+  notify(message) {new obsidian.Notice(message);}
+  async connect() {
+    if(this.running || this.connecting || this.stopped)return;
+    this.connecting=true;
+    try {
+      await this.saveState(); // Persist namespace BEFORE any remote creation.
+      this.status='正在请求苹果提醒事项权限…';
+      await this.invoke({action:'authorize'});
+      this.state.enabled=true;await this.saveState();
+      this.connecting=false;await this.run(true);
+    } catch(error) {this.status=error.message;this.notify(`苹果同步：${error.message}`);}
+    finally {this.connecting=false;}
+  }
+  async pause() {
+    this.state.enabled=false;
+    if(this.running)await this.running;
+    await this.saveState();this.status='已暂停 · 两端已有内容保留';
+  }
+  schedule() {
+    if(this.stopped || !this.state?.enabled)return;
+    if(this.running){this.again=true;return;}
+    clearTimeout(this.timer);
+    this.timer=setTimeout(()=>void this.run(false),1200);
+  }
+  async invoke(request) {
+    const app=this.path.join(this.base,'LrpRemindersBridge.app');
+    await this.fs.access(this.path.join(app,'Contents/MacOS/LrpRemindersBridge'));
+    const work=await this.fs.mkdtemp(this.path.join(require('os').tmpdir(),'lrp-reminders-'));
+    const input=this.path.join(work,'request.json'),output=this.path.join(work,'response.json');
+    let child;
+    try {
+      await this.fs.writeFile(input,JSON.stringify(request),{mode:0o600});
+      // Launch as its own app so macOS can show permission for this named helper.
+      child=require('child_process').spawn('/usr/bin/open',['-W','-n',app,'--args',input,output],{stdio:'ignore'});
+      let launchError=null,exited=false;
+      child.on('error',error=>{launchError=error;});child.on('exit',()=>{exited=true;});
+      const started=Date.now();
+      while(Date.now()-started<120000) {
+        if(this.stopped)throw new Error('插件已关闭，同步已停止。');
+        if(launchError)throw launchError;
+        try {
+          const response=JSON.parse(await this.fs.readFile(output,'utf8'));
+          if(!response.ok)throw new Error(response.error || '本地连接程序执行失败。');
+          return response;
+        } catch(error) {if(error.code!=='ENOENT')throw error;}
+        if(exited)throw new Error('本地连接程序未返回结果，请重新连接。');
+        await new Promise(resolve=>setTimeout(resolve,200));
+      }
+      throw new Error('等待苹果授权或同步超时，请重试。');
+    } finally {
+      // open -W owns only its launcher; it is safe to release it after reading the response.
+      child?.kill();await this.fs.rm(work,{recursive:true,force:true});
+    }
+  }
+  async run(manual=false) {
+    if(!this.state?.enabled){if(manual)this.notify('请先在插件设置中连接苹果提醒事项。');return;}
+    if(this.stopped || this.connecting)return;
+    if(this.running){this.again=true;return this.running;}
+    this.running=this.synchronize();
+    try {await this.running;if(manual)this.notify(this.status);}
+    catch(error) {this.status=`同步未完成：${error.message}`;if(manual)this.notify(this.status);console.error('long-range-planner Apple sync:',error.message);}
+    finally {this.running=null;if(this.again){this.again=false;this.schedule();}}
+  }
+  async synchronize() {
+    this.status='正在同步…';
+    const rows=getLrpAppleReminderRows(this.plugin,this.state);
+    const response=await this.invoke({action:'sync',namespace:this.state.namespace,
+      listName:`long-range-planner · ${this.plugin.app.vault.getName()} · ${this.state.namespace.slice(0,6)}`,
+      calendarId:this.state.calendarId || null,rows});
+    if(this.stopped)return;
+    this.state.calendarId=response.calendarId || this.state.calendarId;
+    const sent=new Map(rows.map(row=>[row.key,row]));
+    let imported=0,issues=[];
+    for(const result of response.rows || []) {
+      const row=sent.get(result.key);if(!row)continue;
+      if(result.error){issues.push(result.error);continue;}
+      if(typeof result.completed!=='boolean' || !result.reminderId){issues.push('苹果返回的关联记录不完整');continue;}
+      const latest=getLrpAppleReminderRows(this.plugin,this.state).find(item=>item.key===row.key);
+      if(getLrpAppleRowFingerprint(latest)!==getLrpAppleRowFingerprint(row)) {
+        // Preserve the remote baseline, but never apply a stale response over an in-flight local edit.
+        this.state.links[row.key]={reminderId:result.reminderId,completed:result.completed};
+        this.again=true;continue;
+      }
+      if(row.completed!==result.completed) {
+        try {await this.applyCompletion(row,result.completed);imported++;}
+        catch(error) {issues.push(error.message);continue;} // Keep old baseline so inbound change retries.
+      }
+      this.state.links[row.key]={reminderId:result.reminderId,completed:result.completed};
+    }
+    await this.saveState();
+    this.status=issues.length ? `已同步，${issues.length} 项需处理：${issues[0]}` : `已同步 ${rows.length} 个子任务${imported ? ` · 回传 ${imported} 项完成状态` : ''}`;
+    this.lastSync=new Date().toLocaleTimeString();
+  }
+  async applyCompletion(row,completed) {
+    const root=this.plugin,store=root.taskStore;
+    const tasks=store.getAllForProject(row.projectId);
+    const owner=tasks.find(task=>task.id===row.ownerId);
+    if(!owner)throw new Error('任务已变化，等待下次同步');
+    // Detect edits from another window/device before any inbound file write.
+    const disk=await store.readProjectFile(row.projectId);
+    if(!disk)throw new Error('任务文件无法读取，已保留原数据');
+    applyLrpProgress(disk);
+    if(store.getAllForProject(row.projectId)!==tasks || JSON.stringify(disk)!==JSON.stringify(tasks))throw new Error('任务文件有并发修改，请重新打开插件后同步');
+    const current=getLrpAppleReminderRows(root,this.state).find(item=>item.key===row.key);
+    if(getLrpAppleRowFingerprint(current)!==getLrpAppleRowFingerprint(row))throw new Error('任务正在编辑，等待下次同步');
+    const scope=createLrpProjectScope(root,row.projectId);
+    // Stage canonical progress/scoring changes privately. A failed disk write must not
+    // leave the live checkbox changed and accidentally acknowledge a failed import.
+    const original=JSON.stringify(tasks),staged=JSON.parse(original);
+    scope.settings={...root.settings,activeProjectId:row.projectId,showAllProjects:false,projects:scope.settings.projects.map(project=>({...project}))};
+    scope.taskStore.tasksByProject={...store.tasksByProject,[row.projectId]:staged};
+    scope.taskStore.tasks=staged;scope.taskStore.rebuildIndex();
+    scope.taskStore.saveQuietly=async()=>{applyLrpProgress(staged);};
+    scope.taskStore.writeProjectFile=async()=>{};
+    if(row.subId) {
+      if(!owner.subtasks?.some(sub=>sub.id===row.subId))throw new Error('子任务已变化');
+      await scope.taskStore.updateTask(owner.id,{subtasks:owner.subtasks.map(sub=>sub.id===row.subId ? {...sub,completed} : sub)},{deferReviewDialog:true});
+    } else {
+      const partial={completed,status:completed?'Completed':owner.status==='Completed'?'Not Started':owner.status || 'Not Started'};
+      if(!completed)partial.percentComplete=0;
+      await scope.taskStore.updateTask(owner.id,partial,{deferReviewDialog:true});
+    }
+    const latestDisk=await store.readProjectFile(row.projectId);
+    if(!latestDisk)throw new Error('任务文件无法读取，已保留原数据');
+    applyLrpProgress(latestDisk);
+    if(store.getAllForProject(row.projectId)!==tasks || JSON.stringify(tasks)!==original || JSON.stringify(latestDisk)!==original)throw new Error('任务有并发修改，等待下次同步');
+    await store.writeProjectFile(row.projectId,staged);
+    store.tasksByProject[row.projectId]=staged;
+    store.tasks=store.tasksByProject[store.activeProjectId] || [];store.rebuildIndex();
+    store.refresh();
+  }
+  stop() {this.stopped=true;clearTimeout(this.timer);}
+}
+function renderLrpAppleRemindersSettings(container,plugin) {
+  if(typeof process==='undefined' || process.platform!=='darwin')return;
+  const sync=plugin.lrpAppleSync;
+  const setting=new obsidian.Setting(container).setName('苹果提醒事项与日历')
+    .addButton(button=>button.setButtonText(sync?.state?.enabled?'立即同步':'连接并同步').onClick(async()=>{
+      if(!sync?.state){new obsidian.Notice('请重新加载插件后再连接。');return;}
+      if(sync.state.enabled)await sync.run(true);else await sync.connect();
+      plugin.settingTab?.display();
+    }))
+    .addButton(button=>button.setButtonText('暂停同步').onClick(async()=>{
+      if(sync?.state)await sync.pause();plugin.settingTab?.display();
+    }));
+  // Generic help descriptions are intentionally stripped elsewhere in this plugin.
+  // Connection state is actionable feedback and must remain visible.
+  const status=setting.infoEl.createDiv({cls:'lrp-apple-sync-status',text:sync?.status || '连接程序尚未就绪',attr:{role:'status'}});
+  status.style.color='var(--text-muted)';status.style.fontSize='var(--font-ui-smaller)';
+  if(sync)sync.statusElement=status;
+}
 
 module.exports = ProjectPlannerPlugin;
 //# sourceMappingURL=main.js.map

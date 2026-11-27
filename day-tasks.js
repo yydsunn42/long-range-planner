@@ -28,7 +28,7 @@ class LrpDayTasksModal extends obsidian.Modal {
       const tags=card.createDiv('lrp-preview-chips');
       renderLrpTaskStatus(tags,this.plugin,task);
       tags.createSpan({text:`优先级：${lrpText(task.priority || 'Medium')}`,cls:'lrp-preview-chip'});
-      for(const id of task.tags || []){
+      for(const id of getLrpTaskTagIds(this.plugin.settings,task,project.id)){
         const tag=this.plugin.settings.availableTags?.find(tag=>tag.id===id);
         if(tag){const badge=tags.createSpan({text:tag.name,cls:'lrp-preview-chip'});badge.style.backgroundColor=tag.color;badge.style.color='#000';}
       }

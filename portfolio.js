@@ -12,13 +12,19 @@ function getLrpWeekInfo(value) {
 function updateLrpWeekLabels(labels, now = new Date()) {
   for(const label of labels){
     if(!label.isConnected){labels.delete(label);continue;}
-    label.textContent=`今天 · ${formatLrpWeek(now)}`;
+    label.textContent=formatLrpWeek(now);
   }
+}
+function refreshLrpDateStatus(plugin,now=new Date()) {
+  const today=toDateStr(now),previous=plugin.lrpStatusDate;plugin.lrpStatusDate=today;
+  if(previous && previous!==today)plugin.taskStore?.refresh?.();
 }
 function registerLrpWeekLabel(plugin,label) {
   if(!plugin.lrpWeekLabels){
     plugin.lrpWeekLabels=new Set();
-    const update=()=>updateLrpWeekLabels(plugin.lrpWeekLabels);
+    plugin.lrpStatusDate=toDateStr(new Date());
+    const update=()=>{const now=new Date();updateLrpWeekLabels(plugin.lrpWeekLabels,now);refreshLrpDateStatus(plugin,now);};
+    if(typeof plugin.registerInterval==='function')plugin.registerInterval(window.setInterval(update,60000));
     plugin.registerDomEvent(window,'focus',update);
     plugin.registerDomEvent(label.ownerDocument,'visibilitychange',update);
   }
@@ -152,10 +158,12 @@ function getLrpTaskState(plugin,reference,tasks,now=new Date()) {
   if(Object.prototype.hasOwnProperty.call(task,'_lrpRealDueDate'))task={...task,dueDate:task._lrpRealDueDate};
   const category=getLrpTaskCategory(task,tasks,getLrpPortfolioRules(plugin.settings),now);
   const progress=calculateLrpProgress(task,tasks);
-  const execution=task.status==='Blocked'?'Blocked':task.status==='In Progress' || progress>0?'In Progress':task.status && task.status!=='Completed'?task.status:'Not Started';
+  const schedule=getLrpTaskSchedule(task),today=toDateStr(now);
+  const inScheduledRange=Boolean(schedule.start && schedule.end && schedule.start<=today && today<=schedule.end);
+  const execution=inScheduledRange?'In Progress':task.status==='Blocked'?'Blocked':task.status==='In Progress' || progress>0?'In Progress':task.status && task.status!=='Completed'?task.status:'Not Started';
   const status=category.abandoned?'Abandoned':category.done?'Completed':category.overdue?'Overdue':execution;
   const labels={Abandoned:'已放弃',Completed:'已完成',Overdue:'逾期'};
-  return {...category,status,execution,progress,label:labels[status] || lrpText(status),actionable:!category.abandoned && !category.done};
+  return {...category,status,execution,progress,inScheduledRange,label:labels[status] || lrpText(status),actionable:!category.abandoned && !category.done};
 }
 function getLrpTaskDisplayStatus(plugin,task,tasks,now=new Date()) {
   return task ? getLrpTaskState(plugin,task,tasks,now).label : '—';

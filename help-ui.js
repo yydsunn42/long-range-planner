@@ -12,49 +12,16 @@ const LRP_FUNCTION_HELP = {
   "开始日期": "预计从哪天开始这一阶段。时间轴用它确定任务条左边的位置。",
   "截止日期": "预计在哪天完成这一阶段。周月日历按此日期显示任务，逾期和本周到期统计也使用它。",
   "持续时间": "由开始、截止日期自动计算。若日期先后颠倒，请先修正日期。",
-  "完成百分比": "此处按工时计算：已完成工时 ÷（已完成工时 + 剩余工时）。例如 3 小时已完成、7 小时剩余，显示 30%。总览进度按完成卡片数计算，两者不同。",
+  "完成百分比": "自动模式按子任务平均完成情况或子任务勾选比例计算。手动模式可以选择剩余 100% 到 10%，每 10% 一档；点击标记为已完成表示剩余 0%。总览按各阶段实际进度汇总。",
   "工时": "已完成填写已投入的小时数，预计剩余填写还需要多少小时，合计自动相加。修改已完成通常保持原总量并扣减剩余；修改剩余会调整总量。主任务可从子任务汇总。",
   "费用": "不记录花费时选“不使用”。固定金额直接填金额；按工时计费使用工时乘以费率。它记录金钱预算，不是学习进度。",
   "前置依赖": "用于表示阶段先后顺序。例如 B 要等 A 完成：在 B 中选择 A，再选“完成后开始”，点击添加。其他关系：开始后开始、完成后完成、开始后完成。开启依赖自动排期后，前置任务日期变化会带动后续日期。",
   "资料链接与附件": "填写显示名称和网址，或用 [[笔记名称]] 链接库内笔记。点击添加后即可从这张卡片打开资料。",
   "费用设置": "此处配置整个项目的预算、默认费率和货币符号。无需记录金钱成本的项目可以保持默认值。"
 };
-function addLrpHelpDisclosure(owner, root, settings = false) {
-  if (!root?.querySelectorAll || !root.ownerDocument) return;
-  owner.lrpHelpOpen ||= new Map();
-  const doc = root.ownerDocument;
-  function attach(label, content, key) {
-    if (!label || label.closest('.lrp-help-toggle')) return;
-    const details = doc.createElement('details');
-    details.className = 'lrp-help-toggle';
-    const summary = doc.createElement('summary');
-    const hint = doc.createElement('span');
-    hint.className = 'lrp-help-hint';
-    hint.textContent = '用途说明';
-    label.parentNode.insertBefore(details, label);
-    summary.appendChild(label);
-    summary.appendChild(hint);
-    details.appendChild(summary);
-    const body = doc.createElement('div');
-    body.className = 'lrp-help-body';
-    if (typeof content === 'string') body.textContent = content;
-    else body.appendChild(content);
-    details.appendChild(body);
-    details.open = owner.lrpHelpOpen.get(key) || false;
-    details.addEventListener('toggle', () => owner.lrpHelpOpen.set(key, details.open));
-  }
-  if (settings) {
-    root.querySelectorAll('.setting-item').forEach((row, index) => {
-      const label = row.querySelector('.setting-item-name');
-      const desc = row.querySelector('.setting-item-description');
-      if (label && desc?.textContent.trim()) attach(label, desc, 'setting:'+index+':'+label.textContent);
-    });
-  }
-  root.querySelectorAll('h2,h3').forEach(heading => {
-    const label = heading.textContent.trim();
-    const help = LRP_FUNCTION_HELP[label] || (label.startsWith('费用设置') ? LRP_FUNCTION_HELP['费用设置'] : null);
-    if (help) attach(heading, help, 'feature:'+label);
-  });
+function addLrpHelpDisclosure(owner,root,settings=false) {
+  root?.querySelectorAll?.('.setting-item-description').forEach(node=>node.remove());
+  root?.querySelectorAll?.('.planner-percent-hint,.planner-rolled-up-hint,.planner-cost-rate-hint,.lrp-progress-description,.planner-no-tags,.planner-cost-type-label,.planner-cost-label,.planner-detail-content .setting-item-description').forEach(node=>node.remove());
 }
 function getLrpDetailGroup(label) {
   const groups = {
@@ -100,6 +67,9 @@ function groupLrpTaskDetails(root) {
       fields.appendChild(field);
     }
     if (field) field.appendChild(child);
+  }
+  for(const name of ['基本信息','时间安排','清单与展示','完成进度','费用预算','依赖与资料']){
+    const fields=groups.get(name);if(fields)cards.appendChild(fields.parentNode);
   }
   if (groups.size) root.appendChild(cards);
 }

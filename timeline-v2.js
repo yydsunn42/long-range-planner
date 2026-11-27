@@ -1,3 +1,11 @@
+function getLrpTimelineWeekScroll(first,today,dayWidth) {
+  const monday=today-((new Date(today).getUTCDay()+6)%7)*86400000;
+  return Math.max(0,(monday-first)/86400000*dayWidth);
+}
+function focusLrpTimelineCurrentWeek(view) {
+  view.lrpTimelineLocateCurrent=true;
+  if(view.lrpTimelineReady)return view.render();
+}
 function getLrpSoftTimelineColor(value) {
   const color=String(value || '#ddd5e7');
   if(LRP_BUCKET_PALETTE.includes(color.toLowerCase()))return color;
@@ -58,6 +66,8 @@ async function renderLrpTimelineV2(view) {
   const controls=wrapper.createDiv('lrp-time-controls');
   const state=view.lrpTimelineState || (view.lrpTimelineState={dayWidth:18,scroll:0,collapsed:new Set(),scope:null});
   const scope=all?'all':plugin.settings.activeProjectId;
+  const locateCurrent=Boolean(view.lrpTimelineLocateCurrent || state.scope!==scope);
+  view.lrpTimelineLocateCurrent=false;
   if(state.scope!==scope){state.scroll=0;state.scope=scope;state.collapsed=new Set();state.seen=new Set();state.first=null;state.days=null;state.mode="hierarchy";}
   const tree=getLrpTimelineTree(plugin,all);
   state.seen=state.seen || new Set();
@@ -65,8 +75,16 @@ async function renderLrpTimelineV2(view) {
   const dates=tree.flatMap(node=>[node.start,node.end]).filter(value=>value!==null);
   const today=Date.parse(toDateStr(new Date()));
   const min=dates.length?Math.min(...dates):today,max=dates.length?Math.max(...dates):today+28*86400000;
-  let first=state.first ?? (min-((new Date(min).getUTCDay()+6)%7)*86400000-28*86400000);
-  let days=state.days || Math.max(70,Math.ceil((max-first)/86400000)+29);
+  const origin=Math.min(min,today);
+  let first=state.first ?? (origin-((new Date(origin).getUTCDay()+6)%7)*86400000-28*86400000);
+  let days=state.days || Math.max(70,Math.ceil((Math.max(max,today+28*86400000)-first)/86400000)+29);
+  if(locateCurrent){
+    const monday=today-((new Date(today).getUTCDay()+6)%7)*86400000;
+    if(first>monday)first=monday-28*86400000;
+    days=Math.max(days,Math.ceil((monday-first)/86400000)+35);
+    state.scroll=getLrpTimelineWeekScroll(first,today,state.dayWidth);
+  }
+  state.first=first;state.days=days;
   const minus=controls.createEl('button',{text:'−',attr:{'aria-label':'缩小时间比例'}});
   const zoom=controls.createEl('input',{attr:{type:'range',min:'5',max:'48',step:'1','aria-label':'时间比例'}});zoom.value=String(state.dayWidth);
   const plus=controls.createEl('button',{text:'＋',attr:{'aria-label':'放大时间比例'}});
@@ -77,6 +95,11 @@ async function renderLrpTimelineV2(view) {
   if(state.mode==='subtasks')state.mode='weeks-tasks';
   mode.value=state.mode || 'hierarchy';mode.hidden=all;
   const scroll=wrapper.createDiv('lrp-time-scroll');
+  if(locateCurrent){
+    const currentDay=getLrpTimelineWeekScroll(first,today,1);
+    const visibleDays=Math.ceil(Math.max(1400,scroll.clientWidth-240)/state.dayWidth);
+    days=Math.max(days,currentDay+visibleDays+14);state.days=days;
+  }
   const grid=scroll.createDiv('lrp-time-grid');
   const header=grid.createDiv({text:all?'项目':(plugin.settings.projects || []).find(project=>project.id===plugin.settings.activeProjectId)?.name || '项目',cls:'lrp-time-label lrp-time-corner'});
   const axis=grid.createDiv('lrp-time-axis');
@@ -190,13 +213,15 @@ async function renderLrpTimelineV2(view) {
   };
   minus.onclick=()=>resizeZoom(state.dayWidth-3);plus.onclick=()=>resizeZoom(state.dayWidth+3);zoom.oninput=()=>resizeZoom(zoom.value);
   scroll.addEventListener('wheel',event=>{if(event.ctrlKey || event.metaKey){event.preventDefault();resizeZoom(state.dayWidth+(event.deltaY<0?2:-2));}},{passive:false});
-  now.onclick=()=>{scroll.scrollLeft=Math.max(0,(today-first)/86400000*state.dayWidth-100);drawRows();};
+  now.onclick=()=>{scroll.scrollLeft=getLrpTimelineWeekScroll(first,today,state.dayWidth);state.scroll=scroll.scrollLeft;drawRows();};
   buildAxis();
-  requestAnimationFrame(()=>{if(generation!==view.lrpTimelineGeneration)return;scroll.scrollLeft=state.scroll;drawRows();});
+  requestAnimationFrame(()=>{if(generation!==view.lrpTimelineGeneration)return;scroll.scrollLeft=state.scroll;state.scroll=scroll.scrollLeft;drawRows();});
   // Resize filtering uses current pixel bounds without rebuilding the user's expanded tree.
   view.lrpTimeResize?.disconnect();
   if(typeof ResizeObserver!=='undefined'){view.lrpTimeResize=new ResizeObserver(drawRows);view.lrpTimeResize.observe(scroll);}
 }
 GanttView.prototype.render=function(){return renderLrpTimelineV2(this);};
+const lrpTimelineOpen=GanttView.prototype.onOpen;
+GanttView.prototype.onOpen=async function(...args){this.lrpTimelineLocateCurrent=true;this.lrpTimelineReady=false;await lrpTimelineOpen.apply(this,args);this.lrpTimelineReady=true;};
 const lrpTimelineClose=GanttView.prototype.onClose;
-GanttView.prototype.onClose=async function(...args){this.lrpTimelineGeneration=(this.lrpTimelineGeneration || 0)+1;this.lrpTimeResize?.disconnect();return lrpTimelineClose.apply(this,args);};
+GanttView.prototype.onClose=async function(...args){this.lrpTimelineReady=false;this.lrpTimelineGeneration=(this.lrpTimelineGeneration || 0)+1;this.lrpTimeResize?.disconnect();return lrpTimelineClose.apply(this,args);};

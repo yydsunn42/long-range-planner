@@ -13,3 +13,6 @@ DEFAULT_VERSION.json
 .DS_Store
 __pycache__/
 node_modules/
+LrpRemindersBridge.app/
+YydRemindersBridge.app/
+apple-reminders-state.json
